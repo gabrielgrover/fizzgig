@@ -198,6 +198,8 @@ fn check_for_conflict<T: Clone + Serialize + DeserializeOwned + Default>(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
     use super::*;
 
     #[derive(Serialize, Debug, Default, Clone, Deserialize, PartialEq, Eq)]
@@ -335,5 +337,22 @@ mod tests {
         let contains_correct_msg = err.to_string().contains("Document not found: ");
 
         assert!(contains_correct_msg);
+    }
+
+    #[test]
+    fn should_be_able_to_create_a_hash_map_document() {
+        let mut hs = HashMap::new();
+        hs.insert("hello".to_owned(), "world".to_owned());
+
+        let hash_map_doc_0: Document<HashMap<String, String>> =
+            Document::new("Config").update(hs.clone()).store().unwrap();
+
+        let hash_map_doc_1: Document<HashMap<String, String>> = Document::new("Config")
+            .load(hash_map_doc_0.read_uuid())
+            .unwrap();
+
+        let received_hash_map = hash_map_doc_1.read_data();
+
+        assert_eq!(received_hash_map, &hs);
     }
 }
