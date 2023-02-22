@@ -1,5 +1,6 @@
 use std::{
     collections::hash_map::DefaultHasher,
+    fmt::Debug,
     hash::{Hash, Hasher},
     io::{Read, Seek, Write},
     path::PathBuf,
@@ -18,11 +19,14 @@ pub struct Document<T> {
     rev: String,
     data: T,
     seq: i64,
+    encrypted_data: String,
+    encrypted: bool,
+    has_been_decrypted: bool,
 }
 
 impl<T> Document<T>
 where
-    T: Clone + Serialize + DeserializeOwned + Default,
+    T: Clone + Serialize + DeserializeOwned + Default + Debug,
 {
     /// Creates a Document
     pub fn new(label: &str) -> Self {
@@ -32,6 +36,9 @@ where
             data: Default::default(),
             seq: 0i64,
             label: label.to_owned(),
+            encrypted_data: Default::default(),
+            encrypted: false,
+            has_been_decrypted: false,
         }
     }
 
@@ -43,17 +50,115 @@ where
     }
 
     /// Saves Document to filesystem
-    pub fn store(mut self) -> Result<Self, LocalLedgerError> {
-        let data = serde_json::to_string(&self.data).map_err(|serde_err| {
+    pub fn store(self) -> Result<Self, LocalLedgerError> {
+        //let data = self.stringify_data()?;
+
+        self.do_store(false)
+    }
+
+    /// Saves Document to filesystem, but calls encrypt transform function before writing to disk.
+    ///
+    /// If successfull, this method clears the data currently being held in the Document.  Calling `read_data` afterward will give you default values and will not match what was saved to disk.  You must call `decrypt_load` in order to get the data again.
+    pub fn store_encrypted<F>(mut self, encrypt: F) -> Result<Self, LocalLedgerError>
+    where
+        F: Fn(&str) -> Result<String, LocalLedgerError>,
+    {
+        let data = self.stringify_data()?;
+        let encrypted_data = encrypt(&data)?;
+
+        println!("encrypted_data: {}", encrypted_data);
+
+        self.encrypted_data = encrypted_data;
+
+        self.data = Default::default();
+
+        self.encrypted = true;
+
+        self.do_store(true)
+    }
+
+    /// Removes Document from filesystem
+    pub fn remove(&mut self) -> Result<(), LocalLedgerError> {
+        let mut path = get_or_create_doc_dir(&self.label)?;
+
+        path.push(format!("{}.json", self.uuid));
+
+        std::fs::remove_file(path).map_err(|err| {
+            LocalLedgerError::new(&format!("Failed to remove doc: {}", err.to_string()))
+        })?;
+
+        Ok(())
+    }
+
+    /// Loads Document from the filesystem
+    pub fn load(self, uuid: &str) -> Result<Self, LocalLedgerError> {
+        let contents = load_from_disc(uuid, &self.label)?;
+
+        let doc = self.parse_doc(&contents)?;
+
+        if doc.encrypted {
+            return Err(LocalLedgerError::new("Load failed.  Data is encrypted"));
+        }
+
+        Ok(doc)
+    }
+
+    /// Loads Document from the filesystem, but calls decrypt transform funcion after reading from disk.
+    pub fn decrypt_load<F>(self, uuid: &str, decrypt: F) -> Result<Self, LocalLedgerError>
+    where
+        F: Fn(&str) -> Result<String, LocalLedgerError>,
+    {
+        let contents = load_from_disc(uuid, &self.label)?;
+        let mut parsed_doc = self.parse_doc(&contents)?;
+        let decrypted_data = decrypt(&parsed_doc.encrypted_data)?;
+
+        let parsed_data: T = serde_json::from_str(&decrypted_data).map_err(|err| {
             LocalLedgerError::new(&format!(
-                "Failed to serialize document: {:?}",
-                serde_err.to_string()
+                "Failed to parse decrypted data: {}",
+                err.to_string()
             ))
         })?;
 
+        println!("parsed_data: {:?}", parsed_data);
+
+        parsed_doc.data = parsed_data;
+
+        parsed_doc.has_been_decrypted = true;
+
+        Ok(parsed_doc)
+    }
+
+    /// Return read only Document data
+    pub fn read_data<'a>(&'a self) -> Result<&'a T, LocalLedgerError> {
+        if !self.encrypted {
+            return Ok(&self.data);
+        }
+
+        if self.encrypted && self.has_been_decrypted {
+            return Ok(&self.data);
+        }
+
+        Err(LocalLedgerError::new(
+            "Document is encrypted.  Please use decrypt_load in order to read this document",
+        ))
+    }
+
+    /// Returns read only uuid
+    pub fn read_uuid<'a>(&'a self) -> &'a str {
+        &self.uuid
+    }
+
+    fn do_store(mut self, encrypted: bool) -> Result<Self, LocalLedgerError> {
         let mut h = DefaultHasher::new();
 
-        data.hash(&mut h);
+        if encrypted {
+            self.encrypted_data.hash(&mut h);
+        } else {
+            //self.stringify_data().hash(&mut h);
+            let data = self.stringify_data()?;
+
+            data.hash(&mut h);
+        }
 
         let rev = h.finish().to_string();
 
@@ -89,38 +194,23 @@ where
         Ok(self)
     }
 
-    /// Removes Document from filesystem
-    pub fn remove(&mut self) -> Result<(), LocalLedgerError> {
-        let mut path = get_or_create_doc_dir(&self.label)?;
-
-        path.push(format!("{}.json", self.uuid));
-
-        std::fs::remove_file(path).map_err(|err| {
-            LocalLedgerError::new(&format!("Failed to remove doc: {}", err.to_string()))
+    fn stringify_data(&self) -> Result<String, LocalLedgerError> {
+        let data = serde_json::to_string(&self.data).map_err(|serde_err| {
+            LocalLedgerError::new(&format!(
+                "Failed to serialize document: {:?}",
+                serde_err.to_string()
+            ))
         })?;
 
-        Ok(())
+        Ok(data)
     }
 
-    /// Loads Document from the filesystem
-    pub fn load(self, uuid: &str) -> Result<Self, LocalLedgerError> {
-        let contents = load_from_disc(uuid, &self.label)?;
-
+    fn parse_doc(self, contents: &str) -> Result<Self, LocalLedgerError> {
         let doc: Self = serde_json::from_str(&contents).map_err(|err| {
             LocalLedgerError::new(&format!("Failed to parse doc file: {}", err.to_string()))
         })?;
 
         Ok(doc)
-    }
-
-    /// Return read only Document data
-    pub fn read_data<'a>(&'a self) -> &'a T {
-        &self.data
-    }
-
-    /// Returns read only uuid
-    pub fn read_uuid<'a>(&'a self) -> &'a str {
-        &self.uuid
     }
 }
 
@@ -198,7 +288,7 @@ fn check_for_conflict<T: Clone + Serialize + DeserializeOwned + Default>(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     use super::*;
 
@@ -237,7 +327,7 @@ mod tests {
 
         let loaded_doc: Document<Person> = Document::new("Person").load(&doc.uuid).unwrap();
 
-        let loaded_person = loaded_doc.read_data();
+        let loaded_person = loaded_doc.read_data().unwrap();
 
         assert_eq!(loaded_person, &person);
     }
@@ -263,7 +353,7 @@ mod tests {
 
         let loaded_doc: Document<Person> = Document::new("Person").load(doc.read_uuid()).unwrap();
 
-        let loaded_person = loaded_doc.read_data();
+        let loaded_person = loaded_doc.read_data().unwrap();
 
         assert_eq!(loaded_person, &updated_person);
     }
@@ -351,8 +441,56 @@ mod tests {
             .load(hash_map_doc_0.read_uuid())
             .unwrap();
 
-        let received_hash_map = hash_map_doc_1.read_data();
+        let received_hash_map = hash_map_doc_1.read_data().unwrap();
 
         assert_eq!(received_hash_map, &hs);
+    }
+
+    #[test]
+    fn should_store_encrypted_data() {
+        let person = Person {
+            age: 21,
+            name: "Duderino".to_owned(),
+        };
+
+        let doc_0 = Document::new("Person")
+            .update(person.clone())
+            .store_encrypted(|_data| Ok("ENCRYPTED_DATA".to_owned()))
+            .unwrap();
+
+        let doc_1: Document<Person> = Document::new("Person")
+            .decrypt_load(doc_0.read_uuid(), |_encrypted_data| {
+                let decrypted_data = serde_json::to_string(&person).unwrap();
+
+                Ok(decrypted_data)
+            })
+            .unwrap();
+
+        assert_eq!(doc_0.read_uuid(), doc_1.read_uuid());
+
+        assert_eq!(doc_1.read_data().unwrap(), &person);
+    }
+
+    #[test]
+    fn load_should_fail_if_doc_is_encrypted() {
+        let person = Person {
+            age: 21,
+            name: "Duderino".to_owned(),
+        };
+
+        let doc_0 = Document::new("Person")
+            .update(person.clone())
+            .store_encrypted(|_data| Ok("ENCRYPTED_DATA".to_owned()))
+            .unwrap();
+
+        let failed_doc = Document::<Person>::new("Person")
+            .load(doc_0.read_uuid())
+            .unwrap_err();
+
+        let received_err_msg = &failed_doc.message;
+
+        let expected_err_msg = "Load failed.  Data is encrypted";
+
+        assert_eq!(received_err_msg, expected_err_msg);
     }
 }
