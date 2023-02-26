@@ -19,9 +19,10 @@ pub struct Document<T> {
     rev: String,
     data: T,
     seq: i64,
-    encrypted_data: String,
+    encrypted_data: Vec<u8>,
     encrypted: bool,
     has_been_decrypted: bool,
+    nonce: Vec<u8>,
 }
 
 impl<T> Document<T>
@@ -39,6 +40,7 @@ where
             encrypted_data: Default::default(),
             encrypted: false,
             has_been_decrypted: false,
+            nonce: Vec::new(),
         }
     }
 
@@ -51,7 +53,11 @@ where
 
     /// Saves Document to filesystem
     pub fn store(self) -> Result<Self, LocalLedgerError> {
-        //let data = self.stringify_data()?;
+        if self.encrypted {
+            return Err(LocalLedgerError::new(
+                "Failed to store.  Document has been encrypted.  Try store_encrypted instead.",
+            ));
+        }
 
         self.do_store(false)
     }
@@ -61,12 +67,10 @@ where
     /// If successfull, this method clears the data currently being held in the Document.  Calling `read_data` afterward will give you default values and will not match what was saved to disk.  You must call `decrypt_load` in order to get the data again.
     pub fn store_encrypted<F>(mut self, encrypt: F) -> Result<Self, LocalLedgerError>
     where
-        F: Fn(&str) -> Result<String, LocalLedgerError>,
+        F: Fn(Vec<u8>) -> Result<Vec<u8>, LocalLedgerError>,
     {
         let data = self.stringify_data()?;
-        let encrypted_data = encrypt(&data)?;
-
-        println!("encrypted_data: {}", encrypted_data);
+        let encrypted_data = encrypt(data.into_bytes())?;
 
         self.encrypted_data = encrypted_data;
 
@@ -106,13 +110,13 @@ where
     /// Loads Document from the filesystem, but calls decrypt transform funcion after reading from disk.
     pub fn decrypt_load<F>(self, uuid: &str, decrypt: F) -> Result<Self, LocalLedgerError>
     where
-        F: Fn(&str) -> Result<String, LocalLedgerError>,
+        F: Fn(&Vec<u8>) -> Result<Vec<u8>, LocalLedgerError>,
     {
         let contents = load_from_disc(uuid, &self.label)?;
         let mut parsed_doc = self.parse_doc(&contents)?;
         let decrypted_data = decrypt(&parsed_doc.encrypted_data)?;
 
-        let parsed_data: T = serde_json::from_str(&decrypted_data).map_err(|err| {
+        let parsed_data: T = serde_json::from_slice(&decrypted_data).map_err(|err| {
             LocalLedgerError::new(&format!(
                 "Failed to parse decrypted data: {}",
                 err.to_string()
@@ -146,6 +150,11 @@ where
     /// Returns read only uuid
     pub fn read_uuid<'a>(&'a self) -> &'a str {
         &self.uuid
+    }
+
+    /// Returns an ownable copy of the document uuid
+    pub fn get_uuid(&self) -> String {
+        self.uuid.clone()
     }
 
     fn do_store(mut self, encrypted: bool) -> Result<Self, LocalLedgerError> {
@@ -455,12 +464,12 @@ mod tests {
 
         let doc_0 = Document::new("Person")
             .update(person.clone())
-            .store_encrypted(|_data| Ok("ENCRYPTED_DATA".to_owned()))
+            .store_encrypted(|_data| Ok(b"ENCRYPTED_DATA".to_vec()))
             .unwrap();
 
         let doc_1: Document<Person> = Document::new("Person")
             .decrypt_load(doc_0.read_uuid(), |_encrypted_data| {
-                let decrypted_data = serde_json::to_string(&person).unwrap();
+                let decrypted_data = serde_json::to_vec(&person).unwrap();
 
                 Ok(decrypted_data)
             })
@@ -480,7 +489,7 @@ mod tests {
 
         let doc_0 = Document::new("Person")
             .update(person.clone())
-            .store_encrypted(|_data| Ok("ENCRYPTED_DATA".to_owned()))
+            .store_encrypted(|_data| Ok(b"ENCRYPTED_DATA".to_vec()))
             .unwrap();
 
         let failed_doc = Document::<Person>::new("Person")
@@ -492,5 +501,31 @@ mod tests {
         let expected_err_msg = "Load failed.  Data is encrypted";
 
         assert_eq!(received_err_msg, expected_err_msg);
+    }
+
+    #[test]
+    fn store_should_fail_if_doc_is_encrypted() {
+        let person = Person {
+            age: 21,
+            name: "Duderino".to_owned(),
+        };
+
+        let doc_0 = Document::new("Person")
+            .update(person.clone())
+            .store_encrypted(|_data| Ok(b"ENCRYPTED_DATA".to_vec()))
+            .unwrap();
+
+        let person_update = Person { age: 18, ..person };
+
+        let failed_update = doc_0.update(person_update).store().unwrap_err();
+
+        let received_err_msg = &failed_update.message;
+
+        let expected_err_msg =
+            "Failed to store.  Document has been encrypted.  Try store_encrypted instead.";
+
+        assert_eq!(received_err_msg, expected_err_msg);
+
+        //We need tests to test for possible over writes / data tampering
     }
 }
