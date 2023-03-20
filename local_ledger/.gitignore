@@ -1,4 +1,8 @@
 /target
 /Cargo.lock
-/Person
+
+# Test files
 /Config
+/Passwords
+/Person
+/Users

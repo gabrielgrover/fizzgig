@@ -29,7 +29,7 @@ impl<T> Document<T>
 where
     T: Clone + Serialize + DeserializeOwned + Default + Debug,
 {
-    /// Creates a Document
+    /// Creates a Document with a specified label
     pub fn new(label: &str) -> Self {
         Document {
             uuid: generate_id(),
@@ -44,15 +44,30 @@ where
         }
     }
 
+    /// Creates a document with specified label and uuid
+    pub fn new_alt(label: &str, uuid: &str) -> Self {
+        Document {
+            uuid: uuid.to_owned(),
+            rev: Default::default(),
+            data: Default::default(),
+            seq: 0i64,
+            label: label.to_owned(),
+            encrypted_data: Default::default(),
+            encrypted: false,
+            has_been_decrypted: false,
+            nonce: Vec::new(),
+        }
+    }
+
     /// Updates the fields of a Document
-    pub fn update(mut self, updates: T) -> Self {
+    pub fn update<'a>(&'a mut self, updates: T) -> &'a mut Self {
         self.data = updates;
 
         self
     }
 
     /// Saves Document to filesystem
-    pub fn store(self) -> Result<Self, LocalLedgerError> {
+    pub fn store<'a>(&'a mut self) -> Result<&'a Self, LocalLedgerError> {
         if self.encrypted {
             return Err(LocalLedgerError::new(
                 "Failed to store.  Document has been encrypted.  Try store_encrypted instead.",
@@ -65,7 +80,7 @@ where
     /// Saves Document to filesystem, but calls encrypt transform function before writing to disk.
     ///
     /// If successfull, this method clears the data currently being held in the Document.  Calling `read_data` afterward will give you default values and will not match what was saved to disk.  You must call `decrypt_load` in order to get the data again.
-    pub fn store_encrypted<F>(mut self, encrypt: F) -> Result<Self, LocalLedgerError>
+    pub fn store_encrypted<'a, F>(&'a mut self, encrypt: F) -> Result<&'a Self, LocalLedgerError>
     where
         F: Fn(Vec<u8>) -> Result<Vec<u8>, LocalLedgerError>,
     {
@@ -77,6 +92,9 @@ where
         self.data = Default::default();
 
         self.encrypted = true;
+
+        // If we make the has_been_decrypted field public we need to write a test for it
+        self.has_been_decrypted = false;
 
         self.do_store(true)
     }
@@ -95,24 +113,58 @@ where
     }
 
     /// Loads Document from the filesystem
-    pub fn load(self, uuid: &str) -> Result<Self, LocalLedgerError> {
+    pub fn load<'a>(&'a mut self, uuid: &str) -> Result<&'a mut Self, LocalLedgerError> {
         let contents = load_from_disc(uuid, &self.label)?;
 
+        //println!("loaded contents: {}", contents);
+
         let doc = self.parse_doc(&contents)?;
+
+        println!("parsed doc: {:?}", doc);
 
         if doc.encrypted {
             return Err(LocalLedgerError::new("Load failed.  Data is encrypted"));
         }
 
-        Ok(doc)
+        let _ = std::mem::replace(self, doc);
+
+        Ok(self)
+    }
+
+    /// Tries to load document.  If it doesn't exist None is returned.
+    pub fn try_load<'a>(&'a mut self, uuid: &str) -> Option<&'a mut Self> {
+        match get_or_create_doc_dir(&self.label) {
+            Ok(mut path) => {
+                path.push(format!("{}.json", self.uuid));
+
+                let file_exists = path.exists();
+
+                if !file_exists {
+                    return None;
+                }
+
+                match self.load(uuid) {
+                    Ok(doc) => Some(doc),
+                    Err(_) => None,
+                }
+            }
+
+            Err(_) => None,
+        }
+        //let mut path = get_or_create_doc_dir(&self.label);
     }
 
     /// Loads Document from the filesystem, but calls decrypt transform funcion after reading from disk.
-    pub fn decrypt_load<F>(self, uuid: &str, decrypt: F) -> Result<Self, LocalLedgerError>
+    pub fn decrypt_load<'a, F>(
+        &'a mut self,
+        uuid: &str,
+        decrypt: F,
+    ) -> Result<&'a Self, LocalLedgerError>
     where
         F: Fn(&Vec<u8>) -> Result<Vec<u8>, LocalLedgerError>,
     {
         let contents = load_from_disc(uuid, &self.label)?;
+
         let mut parsed_doc = self.parse_doc(&contents)?;
         let decrypted_data = decrypt(&parsed_doc.encrypted_data)?;
 
@@ -123,13 +175,13 @@ where
             ))
         })?;
 
-        println!("parsed_data: {:?}", parsed_data);
-
         parsed_doc.data = parsed_data;
 
         parsed_doc.has_been_decrypted = true;
 
-        Ok(parsed_doc)
+        let _ = std::mem::replace(self, parsed_doc);
+
+        Ok(self)
     }
 
     /// Return read only Document data
@@ -147,9 +199,27 @@ where
         ))
     }
 
+    pub fn read_mut<'a>(&'a mut self) -> Result<&'a mut T, LocalLedgerError> {
+        if !self.encrypted {
+            return Ok(&mut self.data);
+        }
+
+        if self.encrypted && self.has_been_decrypted {
+            return Ok(&mut self.data);
+        }
+
+        Err(LocalLedgerError::new(
+            "Document is encrypted.  Please use decrypt_load in order to read this document",
+        ))
+    }
+
     /// Returns read only uuid
     pub fn read_uuid<'a>(&'a self) -> &'a str {
         &self.uuid
+    }
+
+    pub fn append_uuid(&mut self, uuid: &str) {
+        self.uuid = uuid.to_owned();
     }
 
     /// Returns an ownable copy of the document uuid
@@ -157,7 +227,11 @@ where
         self.uuid.clone()
     }
 
-    fn do_store(mut self, encrypted: bool) -> Result<Self, LocalLedgerError> {
+    pub fn has_been_decrypted(&self) -> bool {
+        self.has_been_decrypted
+    }
+
+    fn do_store<'a>(&'a mut self, encrypted: bool) -> Result<&'a Self, LocalLedgerError> {
         let mut h = DefaultHasher::new();
 
         if encrypted {
@@ -171,9 +245,11 @@ where
 
         let rev = h.finish().to_string();
 
-        if rev != self.rev {
-            self.seq += 1;
+        if rev == self.rev {
+            return Ok(self);
         }
+
+        self.seq += 1;
 
         self.rev = rev;
 
@@ -193,10 +269,19 @@ where
         let mut doc_file = get_or_create_doc_file(&path)?;
 
         if file_exists {
+            println!("CHECKING FOR CONFLICT");
             check_for_conflict::<T>(&mut doc_file, self.seq)?;
         }
 
-        doc_file.write_all(doc_json.as_bytes()).map_err(|err| {
+        let doc_bytes = doc_json.as_bytes();
+
+        // Set length of file to insure we are replacing the contents.
+        // This can be done via call the .truncate() in get_or_create_doc_file
+        doc_file.set_len(doc_bytes.len() as u64).map_err(|err| {
+            LocalLedgerError::new(&format!("Failed to set file length: {}", err.to_string()))
+        })?;
+
+        doc_file.write_all(doc_bytes).map_err(|err| {
             LocalLedgerError::new(&format!("Failed to save doc: {}", err.to_string()))
         })?;
 
@@ -214,7 +299,7 @@ where
         Ok(data)
     }
 
-    fn parse_doc(self, contents: &str) -> Result<Self, LocalLedgerError> {
+    fn parse_doc(&self, contents: &str) -> Result<Self, LocalLedgerError> {
         let doc: Self = serde_json::from_str(&contents).map_err(|err| {
             LocalLedgerError::new(&format!("Failed to parse doc file: {}", err.to_string()))
         })?;
@@ -263,7 +348,7 @@ fn get_or_create_doc_file(file_path: &PathBuf) -> Result<std::fs::File, LocalLed
     Ok(doc_file)
 }
 
-fn check_for_conflict<T: Clone + Serialize + DeserializeOwned + Default>(
+fn check_for_conflict<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
     doc_file: &mut std::fs::File,
     new_seq: i64,
 ) -> Result<(), LocalLedgerError> {
@@ -314,12 +399,13 @@ mod tests {
             name: "duder".to_owned(),
         };
 
-        let doc: Document<Person> = Document::new("Person")
-            .update(person.clone())
-            .store()
-            .unwrap();
+        let mut doc = Document::new("Person");
+
+        doc.update(person.clone()).store().unwrap();
 
         assert_eq!(person, doc.data);
+
+        doc.remove().unwrap();
     }
 
     #[test]
@@ -329,16 +415,19 @@ mod tests {
             name: "duder".to_owned(),
         };
 
-        let doc: Document<Person> = Document::new("Person")
-            .update(person.clone())
-            .store()
-            .unwrap();
+        let mut doc = Document::new("Person");
 
-        let loaded_doc: Document<Person> = Document::new("Person").load(&doc.uuid).unwrap();
+        doc.update(person.clone()).store().unwrap();
+
+        let mut loaded_doc = Document::<Person>::new("Person");
+
+        loaded_doc.load(&doc.uuid).unwrap();
 
         let loaded_person = loaded_doc.read_data().unwrap();
 
         assert_eq!(loaded_person, &person);
+
+        loaded_doc.remove().unwrap();
     }
 
     #[test]
@@ -348,23 +437,25 @@ mod tests {
             name: "duder".to_owned(),
         };
 
-        let mut doc: Document<Person> = Document::new("Person")
-            .update(person.clone())
-            .store()
-            .unwrap();
+        let mut doc = Document::new("Person");
+        doc.update(person.clone()).store().unwrap();
 
         let updated_person = Person {
             age: 21,
             ..person.clone()
         };
 
-        doc = doc.update(updated_person.clone()).store().unwrap();
+        doc.update(updated_person.clone()).store().unwrap();
 
-        let loaded_doc: Document<Person> = Document::new("Person").load(doc.read_uuid()).unwrap();
+        let mut loaded_doc = Document::<Person>::new("Person");
+
+        loaded_doc.load(doc.read_uuid()).unwrap();
 
         let loaded_person = loaded_doc.read_data().unwrap();
 
         assert_eq!(loaded_person, &updated_person);
+
+        doc.remove().unwrap();
     }
 
     #[test]
@@ -374,20 +465,19 @@ mod tests {
             name: "Duderino".to_owned(),
         };
 
-        let mut doc_0 = Document::new("Person")
-            .update(person.clone())
-            .store()
-            .unwrap();
+        let mut doc_0 = Document::new("Person");
+        doc_0.update(person.clone()).store().unwrap();
 
         let doc_uuid = doc_0.read_uuid();
 
-        let mut doc_1: Document<Person> = Document::new("Person").load(doc_uuid).unwrap();
+        let mut doc_1 = Document::<Person>::new("Person");
+        doc_1.load(doc_uuid).unwrap();
 
-        doc_0 = doc_0.update(Person {
+        doc_0.update(Person {
             age: 31,
             ..person.clone()
         });
-        doc_1 = doc_1.update(Person {
+        doc_1.update(Person {
             age: 22,
             ..person.clone()
         });
@@ -397,14 +487,15 @@ mod tests {
         let err = doc_1.store().unwrap_err();
 
         assert_eq!(err.message, "Document update conflict".to_owned());
+
+        doc_0.remove().unwrap();
     }
 
     #[test]
     fn load_should_fail_if_doc_does_not_exist() {
-        let maybe_doc: Result<Document<Person>, _> =
-            Document::new("Person").load("some invalid uuid");
+        let mut maybe_doc = Document::<Person>::new("Person");
 
-        let err = maybe_doc.unwrap_err();
+        let err = maybe_doc.load("some invalid uuid").unwrap_err();
 
         let contains_correct_msg = err.to_string().contains("Document not found: ");
 
@@ -418,20 +509,18 @@ mod tests {
             name: "Duderino".to_owned(),
         };
 
-        let mut doc_0 = Document::new("Person")
-            .update(person.clone())
-            .store()
-            .unwrap();
+        let mut doc_0 = Document::new("Person");
+        doc_0.update(person.clone()).store().unwrap();
 
         let uuid = doc_0.read_uuid().to_owned();
 
-        let _: Document<Person> = Document::new("Person").load(&uuid).unwrap();
+        let _ = Document::<Person>::new("Person").load(&uuid).unwrap();
 
         doc_0.remove().unwrap();
 
-        let maybe_doc: Result<Document<Person>, _> = Document::new("Person").load(&uuid);
+        let mut maybe_doc = Document::<Person>::new("Person");
 
-        let err = maybe_doc.unwrap_err();
+        let err = maybe_doc.load(&uuid).unwrap_err();
 
         let contains_correct_msg = err.to_string().contains("Document not found: ");
 
@@ -443,16 +532,17 @@ mod tests {
         let mut hs = HashMap::new();
         hs.insert("hello".to_owned(), "world".to_owned());
 
-        let hash_map_doc_0: Document<HashMap<String, String>> =
-            Document::new("Config").update(hs.clone()).store().unwrap();
+        let mut hash_map_doc_0 = Document::<HashMap<String, String>>::new("Config");
+        hash_map_doc_0.update(hs.clone()).store().unwrap();
 
-        let hash_map_doc_1: Document<HashMap<String, String>> = Document::new("Config")
-            .load(hash_map_doc_0.read_uuid())
-            .unwrap();
+        let mut hash_map_doc_1 = Document::<HashMap<String, String>>::new("Config");
+        hash_map_doc_1.load(hash_map_doc_0.read_uuid()).unwrap();
 
         let received_hash_map = hash_map_doc_1.read_data().unwrap();
 
         assert_eq!(received_hash_map, &hs);
+
+        hash_map_doc_0.remove().unwrap();
     }
 
     #[test]
@@ -462,12 +552,16 @@ mod tests {
             name: "Duderino".to_owned(),
         };
 
-        let doc_0 = Document::new("Person")
+        let mut doc_0 = Document::new("Person");
+
+        doc_0
             .update(person.clone())
             .store_encrypted(|_data| Ok(b"ENCRYPTED_DATA".to_vec()))
             .unwrap();
 
-        let doc_1: Document<Person> = Document::new("Person")
+        let mut doc_1 = Document::<Person>::new("Person");
+
+        doc_1
             .decrypt_load(doc_0.read_uuid(), |_encrypted_data| {
                 let decrypted_data = serde_json::to_vec(&person).unwrap();
 
@@ -478,6 +572,9 @@ mod tests {
         assert_eq!(doc_0.read_uuid(), doc_1.read_uuid());
 
         assert_eq!(doc_1.read_data().unwrap(), &person);
+
+        doc_0.remove().unwrap();
+        //remove_doc("Person", doc_0.read_uuid()).unwrap();
     }
 
     #[test]
@@ -487,7 +584,9 @@ mod tests {
             name: "Duderino".to_owned(),
         };
 
-        let doc_0 = Document::new("Person")
+        let mut doc_0 = Document::new("Person");
+
+        doc_0
             .update(person.clone())
             .store_encrypted(|_data| Ok(b"ENCRYPTED_DATA".to_vec()))
             .unwrap();
@@ -501,6 +600,8 @@ mod tests {
         let expected_err_msg = "Load failed.  Data is encrypted";
 
         assert_eq!(received_err_msg, expected_err_msg);
+
+        doc_0.remove().unwrap();
     }
 
     #[test]
@@ -510,7 +611,9 @@ mod tests {
             name: "Duderino".to_owned(),
         };
 
-        let doc_0 = Document::new("Person")
+        let mut doc_0 = Document::new("Person");
+
+        doc_0
             .update(person.clone())
             .store_encrypted(|_data| Ok(b"ENCRYPTED_DATA".to_vec()))
             .unwrap();
@@ -526,6 +629,67 @@ mod tests {
 
         assert_eq!(received_err_msg, expected_err_msg);
 
-        //We need tests to test for possible over writes / data tampering
+        //remove_doc("Person", uuid)
+        doc_0.remove().unwrap();
+    }
+
+    #[test]
+    fn should_be_able_to_query_document_for_its_decrypted_state() {
+        let person = Person {
+            age: 21,
+            name: "Duderino".to_owned(),
+        };
+
+        let mut doc_0 = Document::new("Person");
+
+        doc_0
+            .update(person.clone())
+            .store_encrypted(|_data| Ok(b"ENCRYPTED_DATA".to_vec()))
+            .unwrap();
+
+        assert!(!doc_0.has_been_decrypted());
+
+        let uuid = doc_0.get_uuid();
+
+        doc_0
+            .decrypt_load(&uuid, |_| {
+                let decrypted_data = serde_json::to_vec(&person).unwrap();
+
+                Ok(decrypted_data)
+            })
+            .unwrap();
+
+        assert!(doc_0.has_been_decrypted());
+
+        doc_0
+            .update(Person {
+                name: "Duder".to_owned(),
+                ..person
+            })
+            .store_encrypted(|_data| Ok(b"UPDATED_ENCRYPTED_DATA".to_vec()))
+            .unwrap();
+
+        assert!(!doc_0.has_been_decrypted());
+
+        doc_0.remove().unwrap();
+    }
+
+    #[test]
+    fn should_be_able_to_store_doc_with_no_changes() {
+        let person = Person {
+            age: 21,
+            name: "duder".to_owned(),
+        };
+
+        let mut doc_0 = Document::new("Person");
+
+        doc_0.update(person.clone()).store().unwrap();
+
+        doc_0
+            .update(person.clone())
+            .store()
+            .expect("Failed to store");
+
+        doc_0.remove().unwrap();
     }
 }
