@@ -8,7 +8,7 @@ pub fn generate_id() -> String {
     String::from(id)
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct LocalLedgerError {
     pub message: String,
 }

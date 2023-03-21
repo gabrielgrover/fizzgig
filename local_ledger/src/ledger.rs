@@ -99,6 +99,21 @@ where
         cached_doc.read_data()
     }
 
+    pub fn read_by_entry_name<'a>(
+        &'a mut self,
+        entry_name: &str,
+    ) -> Result<&'a T, LocalLedgerError> {
+        let uuid = self.assoc_doc.read_data()?.get(entry_name).map_or(
+            Err(LocalLedgerError::new(&format!(
+                "Ledger entry with name: {} does not exist",
+                entry_name
+            ))),
+            |uuid| Ok(uuid),
+        )?;
+
+        self.read(uuid.to_string())
+    }
+
     /// Updates document for given `uuid` with given `data`
     pub fn update(&mut self, uuid: &str, data: T) -> Result<(), LocalLedgerError> {
         let doc_is_cached = self.doc_cache.contains(uuid);
