@@ -3,13 +3,16 @@ import logo from "./assets/logo.svg";
 import { invoke } from "@tauri-apps/api/tauri";
 import "./App.css";
 
+const MASTER_PASS = "password1234";
+const COLLECTION_NAME = "First password ledger";
+
 function App() {
   const [greetMsg, setGreetMsg] = createSignal("");
   const [name, setName] = createSignal("");
 
   async function greet() {
     // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
-    setGreetMsg(await invoke("greet", { name: name() }));
+		setGreetMsg(await invoke("greet", { name: name() }));
   }
 
   return (
