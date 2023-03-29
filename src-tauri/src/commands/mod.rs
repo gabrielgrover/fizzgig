@@ -1,12 +1,14 @@
 mod add_entry;
 mod greet;
 mod list;
+mod open_collection;
 mod read_entry;
 mod saved_password;
 
 pub use add_entry::add_entry;
 pub use greet::greet;
 pub use list::list;
+pub use open_collection::open_collection;
 pub use read_entry::read_entry;
 
-use saved_password::SavedPassword;
+pub use saved_password::SavedPassword;

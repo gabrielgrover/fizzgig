@@ -1,0 +1,167 @@
+use crate::commands::SavedPassword;
+use local_ledger::LocalLedger;
+use tokio::sync::{mpsc, oneshot};
+
+pub enum LocalLedgerMessage {
+    Start {
+        ledger_name: String,
+        master_pw: String,
+        respond_to: oneshot::Sender<Result<(), LocalLedgerWorkerErr>>,
+    },
+
+    AddEntry {
+        entry_name: String,
+        pw: String,
+        respond_to: oneshot::Sender<Result<(), LocalLedgerWorkerErr>>,
+    },
+
+    List {
+        respond_to: oneshot::Sender<Result<Vec<String>, LocalLedgerWorkerErr>>,
+    },
+
+    GetEntry {
+        entry_name: String,
+        respond_to: oneshot::Sender<Result<String, LocalLedgerWorkerErr>>,
+    },
+}
+
+#[derive(Debug, serde::Serialize)]
+pub enum LocalLedgerWorkerErr {
+    StartErr(String),
+    ResponseErr(String),
+    AddEntryErr(String),
+    ListEntriesErr(String),
+    GetEntryErr(String),
+}
+
+pub struct LocalLedgerWorker {
+    receiver: mpsc::Receiver<LocalLedgerMessage>,
+    local_ledger: Option<LocalLedger<SavedPassword>>,
+}
+
+impl LocalLedgerWorker {
+    pub fn new(recvr: mpsc::Receiver<LocalLedgerMessage>) -> Self {
+        Self {
+            receiver: recvr,
+            local_ledger: None,
+        }
+    }
+
+    fn handle_msg(&mut self, msg: LocalLedgerMessage) {
+        match msg {
+            LocalLedgerMessage::Start {
+                ledger_name,
+                master_pw,
+                respond_to,
+            } => {
+                let start_result = LocalLedger::<SavedPassword>::new(&ledger_name, master_pw)
+                    .map(|ll| {
+                        self.local_ledger = Some(ll);
+                    })
+                    .map_err(|err| LocalLedgerWorkerErr::StartErr(err.to_string()));
+
+                let _ = respond_to.send(start_result).map_err(|_err| {
+                    // TODO: retry
+                    println!("Failed to start LocalLedgerWorker");
+                });
+            }
+
+            LocalLedgerMessage::AddEntry {
+                entry_name,
+                pw,
+                respond_to,
+            } => {
+                let add_entry_result = self
+                    .local_ledger
+                    .as_mut()
+                    .map_or(
+                        Err(LocalLedgerWorkerErr::AddEntryErr(
+                            "LocalLedgerWorker has not been started.".to_string(),
+                        )),
+                        |ll| Ok(ll),
+                    )
+                    .and_then(|ll| {
+                        let saved_password = SavedPassword {
+                            pw,
+                            name: entry_name.clone(),
+                        };
+
+                        let _ = ll
+                            .create(saved_password, &entry_name)
+                            .map_err(|err| LocalLedgerWorkerErr::AddEntryErr(err.to_string()))?;
+
+                        Ok(())
+                    });
+
+                let _ = respond_to.send(add_entry_result).map_err(|_err| {
+                    // TODO: retry
+                    println!("Failed to add entry");
+                });
+            }
+
+            LocalLedgerMessage::List { respond_to } => {
+                let list_result = self
+                    .local_ledger
+                    .as_mut()
+                    .map_or(
+                        Err(LocalLedgerWorkerErr::ListEntriesErr(
+                            "LocalLedgerWorker has not been started".to_string(),
+                        )),
+                        |ll| Ok(ll),
+                    )
+                    .and_then(|ll| {
+                        let labels = ll
+                            .list_entry_labels()
+                            .map(|ls| {
+                                let owned_ls: Vec<_> =
+                                    ls.into_iter().map(|l| l.to_owned()).collect();
+
+                                owned_ls
+                            })
+                            .map_err(|err| LocalLedgerWorkerErr::ListEntriesErr(err.to_string()))?;
+
+                        Ok(labels)
+                    });
+
+                let _ = respond_to.send(list_result).map_err(|_err| {
+                    // TODO: retry
+                    println!("Failed to list entries");
+                });
+            }
+
+            LocalLedgerMessage::GetEntry {
+                entry_name,
+                respond_to,
+            } => {
+                let pw_result = self
+                    .local_ledger
+                    .as_mut()
+                    .map_or(
+                        Err(LocalLedgerWorkerErr::GetEntryErr(
+                            "LocalLedgerWorker has not been started".to_string(),
+                        )),
+                        |ll| Ok(ll),
+                    )
+                    .and_then(|ll| {
+                        let pw = ll
+                            .read_by_entry_name(&entry_name)
+                            .map(|saved_password| saved_password.pw.to_string())
+                            .map_err(|err| LocalLedgerWorkerErr::GetEntryErr(err.to_string()));
+
+                        pw
+                    });
+
+                let _ = respond_to.send(pw_result).map_err(|_err| {
+                    // TODO: retry
+                    println!("Failed to get entry");
+                });
+            }
+        }
+    }
+}
+
+pub async fn run_llw(mut llw: LocalLedgerWorker) {
+    while let Some(msg) = llw.receiver.recv().await {
+        llw.handle_msg(msg);
+    }
+}
