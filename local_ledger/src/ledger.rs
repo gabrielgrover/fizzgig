@@ -195,6 +195,10 @@ where
 
         Ok(labels)
     }
+
+    pub fn check_pw(&self, candidate_pw: &str) -> bool {
+        bcrypt::verify(candidate_pw, &self.key)
+    }
 }
 
 fn decrypt_load_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
@@ -425,5 +429,19 @@ mod tests {
         user_ledger.remove("my example.com password").unwrap();
 
         user_ledger.remove("my helloworld.com password").unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn should_be_able_to_check_password() {
+        let user_ledger = LocalLedger::<Person>::new("Users", "password".to_owned()).unwrap();
+
+        let mut password_check = user_ledger.check_pw("password");
+
+        assert!(password_check);
+
+        password_check = user_ledger.check_pw("incorrect_password");
+
+        assert!(!password_check);
     }
 }

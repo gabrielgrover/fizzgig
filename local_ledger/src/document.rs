@@ -120,7 +120,7 @@ where
 
         let doc = self.parse_doc(&contents)?;
 
-        println!("parsed doc: {:?}", doc);
+        //println!("parsed doc: {:?}", doc);
 
         if doc.encrypted {
             return Err(LocalLedgerError::new("Load failed.  Data is encrypted"));
@@ -151,7 +151,6 @@ where
 
             Err(_) => None,
         }
-        //let mut path = get_or_create_doc_dir(&self.label);
     }
 
     /// Loads Document from the filesystem, but calls decrypt transform funcion after reading from disk.
@@ -269,7 +268,7 @@ where
         let mut doc_file = get_or_create_doc_file(&path)?;
 
         if file_exists {
-            println!("CHECKING FOR CONFLICT");
+            //println!("CHECKING FOR CONFLICT");
             check_for_conflict::<T>(&mut doc_file, self.seq)?;
         }
 
@@ -309,10 +308,16 @@ where
 }
 
 fn load_from_disc(uuid: &str, label: &str) -> Result<String, LocalLedgerError> {
-    let mut doc_file =
-        std::fs::File::open(format!("./{}/{}.json", label, uuid)).map_err(|err| {
-            LocalLedgerError::new(&format!("Document not found: {}", err.to_string()))
-        })?;
+    //let path = format!("{}/{}.json", get_dir_path(label), uuid);
+    let mut path = get_dir_path(label)?;
+
+    path.push(format!("{}.json", uuid));
+
+    println!("\n\n\nOPENING FILE: {:?}\n\n\n", path);
+
+    let mut doc_file = std::fs::File::open(path).map_err(|err| {
+        LocalLedgerError::new(&format!("Document not found: {}", err.to_string()))
+    })?;
 
     let mut contents = String::new();
     doc_file.read_to_string(&mut contents).unwrap();
@@ -320,10 +325,10 @@ fn load_from_disc(uuid: &str, label: &str) -> Result<String, LocalLedgerError> {
     Ok(contents)
 }
 
-fn get_or_create_doc_dir(dir_name: &str) -> Result<PathBuf, LocalLedgerError> {
-    let mut path = PathBuf::new();
+fn get_or_create_doc_dir(doc_label: &str) -> Result<PathBuf, LocalLedgerError> {
+    let path = get_dir_path(doc_label)?;
 
-    path.push(dir_name);
+    //path.push(&get_dir_path(doc_label)?);
 
     std::fs::create_dir_all(&path).map_err(|err| {
         LocalLedgerError::new(&format!(
@@ -333,6 +338,19 @@ fn get_or_create_doc_dir(dir_name: &str) -> Result<PathBuf, LocalLedgerError> {
     })?;
 
     Ok(path)
+}
+
+fn get_dir_path(doc_label: &str) -> Result<PathBuf, LocalLedgerError> {
+    let mut base_dir = dirs::home_dir().map_or(
+        Err(LocalLedgerError::new("Failed to get directory path")),
+        |d| Ok(d),
+    )?;
+
+    base_dir.push(".fizzgig");
+
+    base_dir.push(doc_label);
+
+    Ok(base_dir)
 }
 
 fn get_or_create_doc_file(file_path: &PathBuf) -> Result<std::fs::File, LocalLedgerError> {
