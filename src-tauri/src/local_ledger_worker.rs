@@ -34,6 +34,18 @@ pub enum LocalLedgerWorkerErr {
     GetEntryErr(String),
 }
 
+impl ToString for LocalLedgerWorkerErr {
+    fn to_string(&self) -> String {
+        match self {
+            LocalLedgerWorkerErr::StartErr(msg) => msg.to_owned(),
+            LocalLedgerWorkerErr::ResponseErr(msg) => msg.to_owned(),
+            LocalLedgerWorkerErr::AddEntryErr(msg) => msg.to_owned(),
+            LocalLedgerWorkerErr::ListEntriesErr(msg) => msg.to_owned(),
+            LocalLedgerWorkerErr::GetEntryErr(msg) => msg.to_owned(),
+        }
+    }
+}
+
 pub struct LocalLedgerWorker {
     receiver: mpsc::Receiver<LocalLedgerMessage>,
     local_ledger: Option<LocalLedger<SavedPassword>>,
@@ -118,9 +130,9 @@ impl LocalLedgerWorker {
 
                                 owned_ls
                             })
-                            .map_err(|err| LocalLedgerWorkerErr::ListEntriesErr(err.to_string()))?;
+                            .map_err(|err| LocalLedgerWorkerErr::ListEntriesErr(err.to_string()));
 
-                        Ok(labels)
+                        labels
                     });
 
                 let _ = respond_to.send(list_result).map_err(|_err| {

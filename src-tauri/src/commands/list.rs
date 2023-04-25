@@ -1,8 +1,8 @@
-use crate::{llw_handler::LocalLedgerWorkerHandler, local_ledger_worker::LocalLedgerWorkerErr};
+use crate::llw_handler::LocalLedgerWorkerHandler;
 
 #[tauri::command]
 pub async fn list<'a>(
     state: tauri::State<'a, LocalLedgerWorkerHandler>,
-) -> Result<Vec<String>, LocalLedgerWorkerErr> {
-    state.list_entries().await
+) -> Result<Vec<String>, String> {
+    state.list_entries().await.map_err(|err| err.to_string())
 }

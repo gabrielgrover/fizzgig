@@ -1,0 +1,34 @@
+.item {
+  background-color: #444444;
+  border: 2px solid #ffffff;
+  padding: 20px;
+  width: 200px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+	max-height: 115px;
+}
+
+.item_title {
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.item_buttons {
+  display: flex;
+  gap: 10px;
+	flex-wrap: wrap;
+}
+
+.item_buttons button {
+  background-color: transparent;
+  border: 2px solid #ffffff;
+  padding: 5px 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.item_buttons button:hover {
+  background-color: #666666;
+}

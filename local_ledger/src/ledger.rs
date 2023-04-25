@@ -1,5 +1,5 @@
 use age::secrecy::Secret;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -14,9 +14,14 @@ use crate::{utility::LocalLedgerError, Document};
 #[derive(Debug)]
 pub struct LocalLedger<T> {
     pub name: String,
-    key: String,
     doc_cache: lru::LruCache<String, Document<T>>,
     assoc_doc: Document<HashMap<String, String>>,
+    meta_doc: Document<LocalLedgerMetaData>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+struct LocalLedgerMetaData {
+    pw_hash: String,
 }
 
 impl<T> LocalLedger<T>
@@ -24,10 +29,6 @@ where
     T: Clone + Serialize + DeserializeOwned + Default + Debug,
 {
     pub fn new(name: &str, ledger_password: String) -> Result<Self, LocalLedgerError> {
-        let key = bcrypt::hash(&ledger_password).map_err(|err| {
-            LocalLedgerError::new(&format!("LocalLedger creation failed: {}", err.to_string()))
-        })?;
-
         let cache_size = match NonZeroUsize::new(100) {
             Some(size) => Ok(size),
             None => Err(LocalLedgerError::new("Failed to initialize doc cache")),
@@ -37,11 +38,44 @@ where
 
         let assoc_doc = create_assoc_doc(name);
 
+        let maybe_meta_doc = try_load_meta_doc(name);
+
+        let meta_doc = match maybe_meta_doc {
+            Some(loaded_meta_doc) => {
+                println!("Meta doc loaded");
+
+                let loaded_pw_hash = loaded_meta_doc.read_data()?.pw_hash.as_str();
+
+                let correct_pw = bcrypt::verify(ledger_password.as_str(), loaded_pw_hash);
+
+                if !correct_pw {
+                    return Err(LocalLedgerError::new("Incorrect password"));
+                }
+
+                loaded_meta_doc
+            }
+            None => {
+                println!("Creating meta doc");
+
+                let pw_hash = bcrypt::hash(&ledger_password).map_err(|err| {
+                    LocalLedgerError::new(&format!(
+                        "LocalLedger creation failed: {}",
+                        err.to_string()
+                    ))
+                })?;
+                let mut created_doc = create_meta_doc(name);
+
+                created_doc.update(LocalLedgerMetaData { pw_hash });
+                created_doc.store()?;
+                created_doc
+            }
+        };
+
         Ok(LocalLedger {
             name: name.to_owned(),
-            key,
             doc_cache,
             assoc_doc,
+            meta_doc,
         })
     }
 
@@ -51,7 +85,7 @@ where
 
         encrypted_doc.update(data);
 
-        encrypt_store_doc(&mut encrypted_doc, &self.key)?;
+        encrypt_store_doc(&mut encrypted_doc, &self.meta_doc.read_data()?.pw_hash)?;
 
         let doc_uuid = encrypted_doc.get_uuid();
 
@@ -70,7 +104,7 @@ where
     pub fn read<'a>(&'a mut self, uuid: String) -> Result<&'a T, LocalLedgerError> {
         let doc_is_cached = self.doc_cache.contains(&uuid);
 
-        let key = &self.key;
+        let key = &self.meta_doc.read_data()?.pw_hash;
 
         if doc_is_cached {
             let mut cached_doc = self.doc_cache.get_mut(&uuid).map_or(
@@ -117,7 +151,7 @@ where
     /// Updates document for given `uuid` with given `data`
     pub fn update(&mut self, uuid: &str, data: T) -> Result<(), LocalLedgerError> {
         let doc_is_cached = self.doc_cache.contains(uuid);
-        let key = &self.key;
+        let key = &self.meta_doc.read_data()?.pw_hash;
 
         if doc_is_cached {
             let mut cached_doc = self.doc_cache.get_mut(uuid).map_or(
@@ -131,18 +165,18 @@ where
 
             cached_doc.update(data);
 
-            encrypt_store_doc(&mut cached_doc, &self.key)?;
+            encrypt_store_doc(&mut cached_doc, &self.meta_doc.read_data()?.pw_hash)?;
 
             return Ok(());
         }
 
         let mut doc = Document::<T>::new(&self.name);
 
-        decrypt_load_doc(&mut doc, uuid, &self.key)?;
+        decrypt_load_doc(&mut doc, uuid, &self.meta_doc.read_data()?.pw_hash)?;
 
         doc.update(data);
 
-        encrypt_store_doc(&mut doc, &self.key)?;
+        encrypt_store_doc(&mut doc, &self.meta_doc.read_data()?.pw_hash)?;
 
         self.doc_cache.put(uuid.to_owned(), doc);
 
@@ -196,9 +230,9 @@ where
         Ok(labels)
     }
 
-    pub fn check_pw(&self, candidate_pw: &str) -> bool {
-        bcrypt::verify(candidate_pw, &self.key)
-    }
+    // pub fn check_pw(&self, candidate_pw: &str) -> bool {
+    //     bcrypt::verify(candidate_pw, &self.meta_doc.read_data()?.pw_hash)
+    // }
 }
 
 fn decrypt_load_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
@@ -254,6 +288,7 @@ fn encrypt_store_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
     Ok(())
 }
 
+/// Attempts to create an assoc doc.  If it already exists it is loaded into memory.  
 fn create_assoc_doc(ledger_name: &str) -> Document<HashMap<String, String>> {
     let mut doc = Document::<HashMap<String, String>>::new(ledger_name);
     doc.append_uuid("ASSOC_DOC");
@@ -261,6 +296,23 @@ fn create_assoc_doc(ledger_name: &str) -> Document<HashMap<String, String>> {
     let _ = doc.try_load("ASSOC_DOC");
 
     doc
+}
+
+fn try_load_meta_doc(ledger_name: &str) -> Option<Document<LocalLedgerMetaData>> {
+    let mut meta_doc = Document::<LocalLedgerMetaData>::new(ledger_name);
+
+    match meta_doc.load("META_DOC") {
+        Ok(_) => Some(meta_doc),
+        Err(_err) => None,
+    }
+}
+
+fn create_meta_doc(ledger_name: &str) -> Document<LocalLedgerMetaData> {
+    let mut meta_doc = Document::<LocalLedgerMetaData>::new(ledger_name);
+
+    meta_doc.append_uuid("META_DOC");
+
+    meta_doc
 }
 
 #[cfg(test)]
@@ -278,6 +330,19 @@ mod tests {
     struct SavedPassword {
         pw: String,
         name: String,
+    }
+
+    #[test]
+    #[serial]
+    fn should_check_pw_for_existing_ledgers() {
+        let _initial_ledger = LocalLedger::<Person>::new("Users", "password".to_owned()).unwrap();
+        let open_initial_ledger_attemp =
+            LocalLedger::<Person>::new("Users", "wrong password".to_owned());
+
+        let err = open_initial_ledger_attemp.unwrap_err();
+        let expected_msg = "Incorrect password".to_string();
+
+        assert_eq!(err.to_string(), expected_msg);
     }
 
     #[test]
@@ -431,17 +496,17 @@ mod tests {
         user_ledger.remove("my helloworld.com password").unwrap();
     }
 
-    #[test]
-    #[serial]
-    fn should_be_able_to_check_password() {
-        let user_ledger = LocalLedger::<Person>::new("Users", "password".to_owned()).unwrap();
+    // #[test]
+    // #[serial]
+    // fn should_be_able_to_check_password() {
+    //     let user_ledger = LocalLedger::<Person>::new("Users", "password".to_owned()).unwrap();
 
-        let mut password_check = user_ledger.check_pw("password");
+    //     let mut password_check = user_ledger.check_pw("password");
 
-        assert!(password_check);
+    //     assert!(password_check);
 
-        password_check = user_ledger.check_pw("incorrect_password");
+    //     password_check = user_ledger.check_pw("incorrect_password");
 
-        assert!(!password_check);
-    }
+    //     assert!(!password_check);
+    // }
 }
