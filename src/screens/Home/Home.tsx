@@ -1,8 +1,8 @@
-import styles from "./home.module.css";
-import { Card } from "../../components";
 import { Ok, Err, Result } from "ts-results-intraloop-fork";
 import { invoke } from "@tauri-apps/api/tauri";
 import { createEffect, createResource, createSignal, For } from "solid-js";
+import styles from "./home.module.css";
+import { Card } from "../../components";
 
 const [err, set_err] = createSignal("");
 const [should_fetch_labels, set_should_fetch_labels] = createSignal(false);
@@ -31,7 +31,11 @@ export const Home = () => {
 
 function PasswordLabels() {
   const [pw_labels, { refetch }] = createResource(() =>
-    invoke<string[]>("list")
+    invoke<string[]>("list").then((labels) => {
+      console.log({ labels });
+
+      return labels;
+    })
   );
 
   createEffect(() => {
@@ -54,7 +58,7 @@ function PasswordLabels() {
     <div class={styles.main}>
       <div class={styles.items}>
         {!pw_labels.error && (
-          <For each={pw_labels()} fallback={<p>Loading...</p>}>
+          <For each={pw_labels()}>
             {(pw_label) => (
               <Card
                 item_label={pw_label}
