@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::commands::SavedPassword;
 use local_ledger::LocalLedger;
 use tokio::sync::{mpsc, oneshot};
@@ -8,20 +10,29 @@ pub enum LocalLedgerMessage {
         master_pw: String,
         respond_to: oneshot::Sender<Result<(), LocalLedgerWorkerErr>>,
     },
-
     AddEntry {
         entry_name: String,
         pw: String,
         respond_to: oneshot::Sender<Result<(), LocalLedgerWorkerErr>>,
     },
-
     List {
         respond_to: oneshot::Sender<Result<Vec<String>, LocalLedgerWorkerErr>>,
     },
-
     GetEntry {
         entry_name: String,
         respond_to: oneshot::Sender<Result<String, LocalLedgerWorkerErr>>,
+    },
+    UpdateEntry {
+        entry_name: String,
+        pw: String,
+        respond_to: oneshot::Sender<Result<(), LocalLedgerWorkerErr>>,
+    },
+    RemoveEntry {
+        entry_name: String,
+        respond_to: oneshot::Sender<Result<(), LocalLedgerWorkerErr>>,
+    },
+    GetLedgerDir {
+        respond_to: oneshot::Sender<Result<PathBuf, LocalLedgerWorkerErr>>,
     },
 }
 
@@ -164,6 +175,84 @@ impl LocalLedgerWorker {
                     });
 
                 let _ = respond_to.send(pw_result).map_err(|_err| {
+                    // TODO: retry
+                    println!("Failed to get entry");
+                });
+            }
+
+            LocalLedgerMessage::UpdateEntry {
+                entry_name,
+                pw,
+                respond_to,
+            } => {
+                let pw_result = self
+                    .local_ledger
+                    .as_mut()
+                    .map_or(
+                        Err(LocalLedgerWorkerErr::GetEntryErr(
+                            "LocalLedgerWorker has not been started".to_string(),
+                        )),
+                        |ll| Ok(ll),
+                    )
+                    .and_then(|ll| {
+                        let saved_password = SavedPassword {
+                            pw,
+                            name: entry_name.clone(),
+                        };
+
+                        let pw = ll
+                            .update(&entry_name, saved_password)
+                            .map_err(|err| LocalLedgerWorkerErr::GetEntryErr(err.to_string()));
+
+                        pw
+                    });
+
+                let _ = respond_to.send(pw_result).map_err(|_err| {
+                    // TODO: retry
+                    println!("Failed to get entry");
+                });
+            }
+
+            LocalLedgerMessage::RemoveEntry {
+                entry_name,
+                respond_to,
+            } => {
+                let pw_result = self
+                    .local_ledger
+                    .as_mut()
+                    .map_or(
+                        Err(LocalLedgerWorkerErr::GetEntryErr(
+                            "LocalLedgerWorker has not been started".to_string(),
+                        )),
+                        |ll| Ok(ll),
+                    )
+                    .and_then(|ll| {
+                        ll.remove(&entry_name)
+                            .map_err(|err| LocalLedgerWorkerErr::GetEntryErr(err.to_string()))
+                    });
+
+                let _ = respond_to.send(pw_result).map_err(|_err| {
+                    // TODO: retry
+                    println!("Failed to get entry");
+                });
+            }
+
+            LocalLedgerMessage::GetLedgerDir { respond_to } => {
+                let dir_result = self
+                    .local_ledger
+                    .as_mut()
+                    .map_or(
+                        Err(LocalLedgerWorkerErr::GetEntryErr(
+                            "LocalLedgerWorker has not been started".to_string(),
+                        )),
+                        |ll| Ok(ll),
+                    )
+                    .and_then(|ll| {
+                        ll.get_ledger_dir()
+                            .map_err(|err| LocalLedgerWorkerErr::GetEntryErr(err.to_string()))
+                    });
+
+                let _ = respond_to.send(dir_result).map_err(|_err| {
                     // TODO: retry
                     println!("Failed to get entry");
                 });

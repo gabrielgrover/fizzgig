@@ -230,6 +230,10 @@ where
         self.has_been_decrypted
     }
 
+    pub fn get_data_dir(&self) -> Result<PathBuf, LocalLedgerError> {
+        get_dir_path(&self.label)
+    }
+
     fn do_store<'a>(&'a mut self, encrypted: bool) -> Result<&'a Self, LocalLedgerError> {
         let mut h = DefaultHasher::new();
 

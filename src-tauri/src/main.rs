@@ -7,7 +7,10 @@ mod commands;
 mod llw_handler;
 mod local_ledger_worker;
 
-use commands::{add_entry, generate_pw, greet, list, open_collection, read_entry};
+use commands::{
+    add_entry, export_ledger, generate_pw, greet, list, open_collection, read_entry, regen_pw,
+    remove_entry,
+};
 
 use llw_handler::LocalLedgerWorkerHandler;
 
@@ -21,7 +24,10 @@ async fn main() {
             list,
             read_entry,
             open_collection,
-            generate_pw
+            generate_pw,
+            regen_pw,
+            remove_entry,
+            export_ledger
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())

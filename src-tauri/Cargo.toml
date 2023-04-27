@@ -19,6 +19,9 @@ tauri = { version = "1.2", features = ["clipboard-all", "shell-open"] }
 tokio = { version = "1.26.0", features = ["rt", "sync",  "macros", "time"] }
 local_ledger = { path = "../local_ledger" }
 passwords = "3.1.13"
+dirs = "5.0.0"
+zip = "0.6.4"
+walkdir = "2.3.3"
 
 [features]
 # by default Tauri runs in production mode

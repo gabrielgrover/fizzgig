@@ -5,6 +5,7 @@ use std::{
     fmt::Debug,
     io::{Read, Write},
     num::NonZeroUsize,
+    path::PathBuf,
 };
 
 use pwhash::bcrypt;
@@ -81,6 +82,19 @@ where
 
     /// Creates a new entry to the ledger.  Returning a uuid.
     pub fn create(&mut self, data: T, label: &str) -> Result<String, LocalLedgerError> {
+        if label.len() == 0 {
+            return Err(LocalLedgerError::new("Label cannot be empty"));
+        }
+
+        let label_already_in_use = self.assoc_doc.read_data()?.contains_key(label);
+
+        println!("assoc doc: {:?}", self.assoc_doc.read_data());
+        println!("label_already_in_use: {}", label_already_in_use);
+
+        if label_already_in_use {
+            return Err(LocalLedgerError::new("Labels must be unique"));
+        }
+
         let mut encrypted_doc = Document::<T>::new(&self.name);
 
         encrypted_doc.update(data);
@@ -148,8 +162,13 @@ where
         self.read(uuid.to_string())
     }
 
-    /// Updates document for given `uuid` with given `data`
-    pub fn update(&mut self, uuid: &str, data: T) -> Result<(), LocalLedgerError> {
+    /// Updates document for given `label` with given `data`
+    pub fn update(&mut self, label: &str, data: T) -> Result<(), LocalLedgerError> {
+        let uuid = self
+            .assoc_doc
+            .read_data()?
+            .get(label)
+            .map_or(Err(LocalLedgerError::new("Label not found")), |i| Ok(i))?;
         let doc_is_cached = self.doc_cache.contains(uuid);
         let key = &self.meta_doc.read_data()?.pw_hash;
 
@@ -228,6 +247,10 @@ where
         }
 
         Ok(labels)
+    }
+
+    pub fn get_ledger_dir(&self) -> Result<PathBuf, LocalLedgerError> {
+        self.assoc_doc.get_data_dir()
     }
 
     // pub fn check_pw(&self, candidate_pw: &str) -> bool {
@@ -434,7 +457,7 @@ mod tests {
 
         user_ledger
             .update(
-                &uuid,
+                "employee-5",
                 Person {
                     age: 25,
                     ..person.clone()
@@ -496,17 +519,48 @@ mod tests {
         user_ledger.remove("my helloworld.com password").unwrap();
     }
 
-    // #[test]
-    // #[serial]
-    // fn should_be_able_to_check_password() {
-    //     let user_ledger = LocalLedger::<Person>::new("Users", "password".to_owned()).unwrap();
+    #[test]
+    #[serial]
+    fn should_return_err_if_label_is_blank() {
+        let s_pw_1 = SavedPassword {
+            name: "www.example.com".to_owned(),
+            pw: "password1234".to_owned(),
+        };
 
-    //     let mut password_check = user_ledger.check_pw("password");
+        let mut user_ledger =
+            LocalLedger::<SavedPassword>::new("Passwords", "master_password".to_owned()).unwrap();
 
-    //     assert!(password_check);
+        let err = user_ledger.create(s_pw_1, "").unwrap_err();
 
-    //     password_check = user_ledger.check_pw("incorrect_password");
+        assert_eq!(err, LocalLedgerError::new("Label cannot be empty"));
+    }
 
-    //     assert!(!password_check);
-    // }
+    #[test]
+    #[serial]
+    fn should_return_err_if_label_is_not_unique() {
+        let s_pw_1 = SavedPassword {
+            name: "www.example.com".to_owned(),
+            pw: "password1234".to_owned(),
+        };
+
+        let s_pw_2 = SavedPassword {
+            name: "www.helloworld.com".to_owned(),
+            pw: "abc123".to_owned(),
+        };
+
+        let mut user_ledger =
+            LocalLedger::<SavedPassword>::new("Passwords", "master_password".to_owned()).unwrap();
+
+        user_ledger
+            .create(s_pw_1.clone(), "my password")
+            .expect("Failed to write to ledger.");
+
+        let err = user_ledger
+            .create(s_pw_2.clone(), "my password")
+            .unwrap_err();
+
+        assert_eq!(err, LocalLedgerError::new("Labels must be unique"));
+
+        user_ledger.remove("my password").unwrap();
+    }
 }

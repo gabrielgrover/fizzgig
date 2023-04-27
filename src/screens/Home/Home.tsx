@@ -3,11 +3,21 @@ import { invoke } from "@tauri-apps/api/tauri";
 import { createEffect, createResource, createSignal, For } from "solid-js";
 import styles from "./home.module.css";
 import { Card } from "../../components";
+import { writeText } from "@tauri-apps/api/clipboard";
 
 const [err, set_err] = createSignal("");
 const [should_fetch_labels, set_should_fetch_labels] = createSignal(false);
 
+const NAV_TABS = ["All Items", "Export"];
+const [curr_tab, set_curr_tab] = createSignal("All Items");
+
 export const Home = () => {
+  createEffect(() => {
+    if (err()) {
+      console.log("ERR: ", err());
+    }
+  });
+
   return (
     <div class={styles.container}>
       <div class={styles.sidebar}>
@@ -17,26 +27,44 @@ export const Home = () => {
           placeholder="Search..."
         />
         <ul class={styles.navigation}>
-          <li>All Items</li>
-          <li>Favorites</li>
-          <li>Passwords</li>
-          <li>Secure Notes</li>
-          <li>Settings</li>
+          {NAV_TABS.map((tab_name) => (
+            <li onClick={() => set_curr_tab(tab_name)}>{tab_name}</li>
+          ))}
         </ul>
       </div>
-      <PasswordLabels />
+      {curr_tab() === NAV_TABS[0] && <PasswordLabels />}
+      {curr_tab() === NAV_TABS[1] && <ExportTab />}
     </div>
   );
 };
 
+function ExportTab() {
+  return (
+    <div class={styles.export_tab_container}>
+      <p>Export your passwords to a zipped file</p>
+      <div style={styles.item_buttons}>
+        <button
+          onClick={async () => {
+            const res = await export_ledger();
+
+            if (res.err) {
+              set_err(res.val);
+            }
+          }}
+        >
+          Export
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PasswordLabels() {
   const [pw_labels, { refetch }] = createResource(() =>
-    invoke<string[]>("list").then((labels) => {
-      console.log({ labels });
-
-      return labels;
-    })
+    invoke<string[]>("list")
   );
+
+  const [card_loading, set_card_loading] = createSignal("");
 
   createEffect(() => {
     if (typeof pw_labels.error !== "string") {
@@ -51,6 +79,7 @@ function PasswordLabels() {
     if (should_fetch_labels()) {
       refetch();
       set_should_fetch_labels(false);
+      set_card_loading("");
     }
   });
 
@@ -62,12 +91,57 @@ function PasswordLabels() {
             {(pw_label) => (
               <Card
                 item_label={pw_label}
-                render_buttons={() => (
-                  <div class={styles.item_buttons}>
-                    <button>Edit</button>
-                    <button>Delete</button>
-                  </div>
-                )}
+                onClick={async () => {
+                  const pw = await get_pw(pw_label);
+
+                  if (pw.err) {
+                    set_err(pw.val);
+
+                    return;
+                  }
+
+                  const res = await copy_to_clipboard(pw.val);
+
+                  if (res.err) {
+                    set_err(res.val);
+                  }
+                }}
+                render_buttons={() =>
+                  card_loading() === pw_label ? (
+                    <div class={styles.spinner} />
+                  ) : (
+                    <div class={styles.item_buttons}>
+                      <button
+                        onClick={async () => {
+                          set_card_loading(pw_label);
+                          const res = await regen_pw(pw_label);
+
+                          if (res.err) {
+                            set_err(res.val);
+                          }
+
+                          set_card_loading("");
+                        }}
+                      >
+                        Regen
+                      </button>
+                      <button
+                        onClick={async () => {
+                          set_card_loading(pw_label);
+                          const res = await remove_password(pw_label);
+
+                          if (res.err) {
+                            set_err(res.val);
+                          }
+
+                          set_should_fetch_labels(true);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )
+                }
               />
             )}
           </For>
@@ -171,6 +245,72 @@ async function generate_password(): Promise<Result<string, string>> {
     const pw = await invoke<string>("generate_pw");
 
     return Ok(pw);
+  } catch (err) {
+    if (typeof err !== "string") {
+      return Err(`An unknown error occurred: ${JSON.stringify(err)}`);
+    }
+
+    return Err(err);
+  }
+}
+
+async function get_pw(label: string): Promise<Result<string, string>> {
+  try {
+    const pw = await invoke<string>("read_entry", { entryName: label });
+
+    return Ok(pw);
+  } catch (err) {
+    const err_msg = JSON.stringify(err);
+
+    return Err(err_msg);
+  }
+}
+
+async function regen_pw(label: string): Promise<Result<void, string>> {
+  try {
+    await invoke("regen_pw", { entryName: label });
+
+    return Ok.EMPTY;
+  } catch (err) {
+    if (typeof err !== "string") {
+      return Err(`An unknown error occurred: ${JSON.stringify(err)}`);
+    }
+
+    return Err(err);
+  }
+}
+
+async function remove_password(label: string): Promise<Result<void, string>> {
+  try {
+    await invoke("remove_entry", { entryName: label });
+
+    return Ok.EMPTY;
+  } catch (err) {
+    if (typeof err !== "string") {
+      return Err(`An unknown error occurred: ${JSON.stringify(err)}`);
+    }
+
+    return Err(err);
+  }
+}
+
+async function copy_to_clipboard(text: string): Promise<Result<void, string>> {
+  try {
+    await writeText(text);
+
+    return Ok.EMPTY;
+  } catch (err) {
+    const err_msg = JSON.stringify(err);
+
+    return Err(err_msg);
+  }
+}
+
+async function export_ledger(): Promise<Result<void, string>> {
+  try {
+    await invoke("export_ledger");
+
+    return Ok.EMPTY;
   } catch (err) {
     if (typeof err !== "string") {
       return Err(`An unknown error occurred: ${JSON.stringify(err)}`);

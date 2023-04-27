@@ -30,7 +30,7 @@ export const Login: Component = () => {
 
   return (
     <div class={styles.container}>
-      <h1 class={styles.heading}>Enter your master password</h1>
+      <h1 class={styles.heading}>Open Vault</h1>
       <input
         class={styles.password_input}
         onInput={(e) => {
@@ -42,7 +42,7 @@ export const Login: Component = () => {
             set_master_pw(input());
           }
         }}
-        placeholder="Password"
+        placeholder="Master Password"
         type="password"
       />
       {F.pipe(

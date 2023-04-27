@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use tokio::sync::{mpsc, oneshot};
 
 use crate::local_ledger_worker::{
@@ -53,6 +55,38 @@ impl LocalLedgerWorkerHandler {
             .map_err(|err| LocalLedgerWorkerErr::ResponseErr(err.to_string()))?
     }
 
+    pub async fn update_entry(
+        &self,
+        entry_name: &str,
+        pw: &str,
+    ) -> Result<(), LocalLedgerWorkerErr> {
+        let (respond_to, rx) = oneshot::channel();
+
+        let msg = LocalLedgerMessage::UpdateEntry {
+            entry_name: entry_name.to_owned(),
+            pw: pw.to_owned(),
+            respond_to,
+        };
+
+        let _ = self.messenger.send(msg).await;
+
+        rx.await
+            .map_err(|err| LocalLedgerWorkerErr::ResponseErr(err.to_string()))?
+    }
+
+    pub async fn remove_entry(&self, entry_name: &str) -> Result<(), LocalLedgerWorkerErr> {
+        let (respond_to, rx) = oneshot::channel();
+        let msg = LocalLedgerMessage::RemoveEntry {
+            entry_name: entry_name.to_owned(),
+            respond_to,
+        };
+
+        let _ = self.messenger.send(msg).await;
+
+        rx.await
+            .map_err(|err| LocalLedgerWorkerErr::ResponseErr(err.to_string()))?
+    }
+
     pub async fn list_entries(&self) -> Result<Vec<String>, LocalLedgerWorkerErr> {
         let (respond_to, rx) = oneshot::channel();
 
@@ -76,5 +110,16 @@ impl LocalLedgerWorkerHandler {
 
         rx.await
             .map_err(|err| LocalLedgerWorkerErr::GetEntryErr(err.to_string()))?
+    }
+
+    pub async fn get_ledger_dir(&self) -> Result<PathBuf, LocalLedgerWorkerErr> {
+        let (respond_to, rx) = oneshot::channel();
+
+        let msg = LocalLedgerMessage::GetLedgerDir { respond_to };
+
+        let _ = self.messenger.send(msg).await;
+
+        rx.await
+            .map_err(|err| LocalLedgerWorkerErr::ResponseErr(err.to_string()))?
     }
 }

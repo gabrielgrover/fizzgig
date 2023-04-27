@@ -8,6 +8,21 @@
   flex-direction: column;
   gap: 10px;
 	max-height: 115px;
+	min-width: 200px;
+}
+
+.clickable_item {
+  background-color: #444444;
+  border: 2px solid #ffffff;
+  padding: 20px;
+  width: 200px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+	max-height: 115px;
+	cursor: pointer;
+	min-width: 200px;
 }
 
 .item_title {
