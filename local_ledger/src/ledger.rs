@@ -10,7 +10,8 @@ use std::{
 
 use pwhash::bcrypt;
 
-use crate::{utility::LocalLedgerError, Document};
+use document::Document;
+use utility::LocalLedgerError;
 
 #[derive(Debug)]
 pub struct LocalLedger<T> {

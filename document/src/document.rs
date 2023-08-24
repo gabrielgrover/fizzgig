@@ -8,7 +8,7 @@ use std::{
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::utility::{generate_id, LocalLedgerError};
+use utility::{generate_id, LocalLedgerError};
 
 const DOCUMENT_CONFLICT_THRESHOLD: i64 = 1;
 

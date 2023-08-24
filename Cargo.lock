@@ -796,6 +796,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "document"
+version = "0.1.0"
+dependencies = [
+ "dirs 3.0.2",
+ "serde",
+ "serde_json",
+ "utility",
+]
+
+[[package]]
 name = "dtoa"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1764,7 +1774,7 @@ name = "local_ledger"
 version = "0.1.0"
 dependencies = [
  "age",
- "dirs 3.0.2",
+ "document",
  "fake",
  "lru",
  "pwhash",
@@ -1772,7 +1782,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
- "uuid 0.8.2",
+ "utility",
 ]
 
 [[package]]
@@ -3711,6 +3721,15 @@ name = "utf-8"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
+
+[[package]]
+name = "utility"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid 0.8.2",
+]
 
 [[package]]
 name = "uuid"
