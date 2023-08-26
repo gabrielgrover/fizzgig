@@ -1,3 +1,4 @@
+use rand::Rng;
 use std::{error::Error, fmt};
 use uuid::Uuid;
 
@@ -6,6 +7,14 @@ pub fn generate_id() -> String {
     let id = Uuid::new_v4().to_simple().encode_upper(&mut buf);
 
     String::from(id)
+}
+
+pub fn generate_pin() -> String {
+    let mut rng = rand::thread_rng();
+    let number: u32 = rng.gen_range(100_000..=999_999);
+    let pin = number.to_string();
+
+    pin
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]

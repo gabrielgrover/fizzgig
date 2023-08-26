@@ -41,19 +41,38 @@ export const Home = () => {
 function ExportTab() {
   return (
     <div class={styles.export_tab_container}>
-      <p>Export your passwords to a zipped file</p>
-      <div style={styles.item_buttons}>
-        <button
-          onClick={async () => {
-            const res = await export_ledger();
+      <div class={styles.export_cta}>
+        <p>Export your passwords to a zipped file</p>
+        <div style={styles.item_buttons}>
+          <button
+            onClick={async () => {
+              const res = await export_ledger();
 
-            if (res.err) {
-              set_err(res.val);
-            }
-          }}
-        >
-          Export
-        </button>
+              if (res.err) {
+                set_err(res.val);
+              }
+            }}
+          >
+            Export
+          </button>
+        </div>
+      </div>
+
+      <div class={styles.export_cta}>
+        <p>Push to sync server</p>
+        <div style={styles.item_buttons}>
+          <button
+            onClick={async () => {
+              const res = await push();
+
+              if (res.err) {
+                set_err(res.val);
+              }
+            }}
+          >
+            Push
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -309,6 +328,20 @@ async function copy_to_clipboard(text: string): Promise<Result<void, string>> {
 async function export_ledger(): Promise<Result<void, string>> {
   try {
     await invoke("export_ledger");
+
+    return Ok.EMPTY;
+  } catch (err) {
+    if (typeof err !== "string") {
+      return Err(`An unknown error occurred: ${JSON.stringify(err)}`);
+    }
+
+    return Err(err);
+  }
+}
+
+async function push(): Promise<Result<void, string>> {
+  try {
+    await invoke("push");
 
     return Ok.EMPTY;
   } catch (err) {

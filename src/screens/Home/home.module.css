@@ -146,9 +146,14 @@
 	width: 100%;
 	align-items: center;
 	padding-left: 10px;
-
+	flex-direction: column;
 }
 
 .export_tab_container p {
 	margin-right: 8px;
+}
+
+.export_cta {
+	display: flex;
+	width: 100%;
 }
