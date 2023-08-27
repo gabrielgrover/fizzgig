@@ -24,6 +24,7 @@ zip = "0.6.4"
 walkdir = "2.3.3"
 reqwest = { version = "0.11.20", features = ["multipart", "stream"] }
 utility = { path = "../utility" }
+land_strider_sdk = { path = "../land_strider_sdk" }
 
 [features]
 # by default Tauri runs in production mode

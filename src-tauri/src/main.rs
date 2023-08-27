@@ -12,12 +12,17 @@ use commands::{
     regen_pw, remove_entry,
 };
 
+use land_strider_sdk::*;
 use llw_handler::LocalLedgerWorkerHandler;
 
 #[tokio::main]
 async fn main() {
+    let land_strider_config = LandStriderConfig::new("localhost", 3001);
+    let land_strider = LandStrider::new(land_strider_config);
+
     tauri::Builder::default()
         .manage(LocalLedgerWorkerHandler::new())
+        .manage(land_strider)
         .invoke_handler(tauri::generate_handler![
             greet,
             add_entry,

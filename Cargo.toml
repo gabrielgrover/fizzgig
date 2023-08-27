@@ -1,3 +1,3 @@
 [workspace]
 
-members = ["src-tauri", "local_ledger", "document", "utility", "land_strider"]
+members = ["src-tauri", "local_ledger", "document", "utility", "land_strider", "land_strider_sdk"]

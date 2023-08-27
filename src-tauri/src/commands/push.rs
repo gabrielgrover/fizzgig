@@ -1,16 +1,16 @@
 use crate::llw_handler::LocalLedgerWorkerHandler;
+use land_strider_sdk::{LandStrider, PushResponse};
 use tokio::fs::File;
 use utility::generate_id;
 use walkdir::WalkDir;
 
 #[tauri::command]
-pub async fn push<'a>(state: tauri::State<'a, LocalLedgerWorkerHandler>) -> Result<(), String> {
-    let source_dir = state
-        .get_ledger_dir()
-        .await
-        .map_err(|err| err.to_string())?;
-
-    //let mut files = vec![];
+pub async fn push<'a>(
+    temp_pw: String,
+    llw: tauri::State<'a, LocalLedgerWorkerHandler>,
+    land_strider: tauri::State<'a, LandStrider>,
+) -> Result<PushResponse, String> {
+    let source_dir = llw.get_ledger_dir().await.map_err(|err| err.to_string())?;
 
     let mut form = reqwest::multipart::Form::new();
 
@@ -20,47 +20,17 @@ pub async fn push<'a>(state: tauri::State<'a, LocalLedgerWorkerHandler>) -> Resu
 
         if entry.file_type().is_file() {
             let file = File::open(path).await.map_err(|e| e.to_string())?;
-            //let reader = BufReader::new(file);
-            //let s = BufStream::new(file);
-            //let stream = reqwest::Body::wrap_stream(s);
-            //let stream = reqwest::Body::wrap_stream(reader.lines);
-            // let mut buffer = vec![];
-            // file.read_to_end(&mut buffer).map_err(|e| e.to_string())?;
-
-            //let stream = reqwest::Body::wrap_stream(file);
-
-            //let part = reqwest::multipart::Part::
             let part = reqwest::multipart::Part::stream(file);
 
             form = form.part(generate_id(), part);
-
-            //parts.push(part);
-
-            //form.part(generate_id(), part);
-
-            //form.part(generate_id(), buffer);
-            //files.push((generate_id(), file));
         }
     }
 
-    let client = reqwest::Client::new();
+    let pw_part = reqwest::multipart::Part::text(temp_pw);
 
-    let resp = client
-        .post("http://localhost:3001/push")
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    form = form.part("pw", pw_part);
 
-    if !resp.status().is_success() {
-        return Err(format!("Push failed {:?}", resp));
-    }
+    let push_resp = land_strider.push(form).await.map_err(|e| e.to_string())?;
 
-    // for part in parts {
-    //     form = form.part(generate_id(), part);
-    // }
-
-    //let client = reqwest::Client::builder(
-
-    Ok(())
+    Ok(push_resp)
 }
