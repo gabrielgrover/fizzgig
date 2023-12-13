@@ -8,7 +8,7 @@ import { writeText } from "@tauri-apps/api/clipboard";
 const [err, set_err] = createSignal("");
 const [should_fetch_labels, set_should_fetch_labels] = createSignal(false);
 
-const NAV_TABS = ["All Items", "Export"];
+const NAV_TABS = ["All Items", "Export", "Upload", "Download"];
 const [curr_tab, set_curr_tab] = createSignal("All Items");
 
 export const Home = () => {
@@ -21,22 +21,122 @@ export const Home = () => {
   return (
     <div class={styles.container}>
       <div class={styles.sidebar}>
+        {/*
         <input
           class={styles.search_input}
           type="text"
           placeholder="Search..."
         />
+				*/}
         <ul class={styles.navigation}>
           {NAV_TABS.map((tab_name) => (
             <li onClick={() => set_curr_tab(tab_name)}>{tab_name}</li>
           ))}
         </ul>
       </div>
-      {curr_tab() === NAV_TABS[0] && <PasswordLabels />}
-      {curr_tab() === NAV_TABS[1] && <ExportTab />}
+      <div class={styles.content_container}>
+        {curr_tab() === NAV_TABS[0] && <PasswordLabels />}
+        {curr_tab() === NAV_TABS[1] && <ExportTab />}
+        {curr_tab() === NAV_TABS[2] && <UploadTab />}
+        {curr_tab() === NAV_TABS[3] && <DownloadTab />}
+      </div>
     </div>
   );
 };
+
+function UploadTab() {
+  const [temp_pw, set_temp_pw] = createSignal("");
+  const [pin, set_pin] = createSignal("");
+  return (
+    <div class={styles.push_container}>
+      <p>Upload to sync server</p>
+      <div class={styles.push_temp_pw_container}>
+        <input
+          class={styles.item_input}
+          placeholder="Temporary password"
+          type="password"
+          onInput={(e) => {
+            e.preventDefault();
+
+            set_temp_pw(e.currentTarget.value);
+          }}
+        />
+      </div>
+      <div style={styles.item_buttons}>
+        <button
+          onClick={async () => {
+            const pw = temp_pw();
+
+            if (!pw) {
+              return;
+            }
+
+            const res = await push(pw);
+
+            if (res.err) {
+              return set_err(res.val);
+            }
+
+            set_pin(res.val);
+
+            console.log({ pin: res.val });
+          }}
+        >
+          Upload
+        </button>
+      </div>
+      {pin() && (
+        <p>
+          Your pin is {pin()}. Use the pin and your temporary password to
+          download your passwords from the server.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function DownloadTab() {
+  const [temp_pw, set_temp_pw] = createSignal("");
+  const [pin, set_pin] = createSignal("");
+
+  return (
+    <div class={styles.pull_container}>
+      <p>Download from sync server</p>
+      <div class={styles.push_temp_pw_container}>
+        <input
+          class={styles.item_input}
+          placeholder="Pin"
+          onInput={(e) => set_pin(e.currentTarget.value)}
+        />
+      </div>
+      <div class={styles.push_temp_pw_container}>
+        <input
+          class={styles.item_input}
+          placeholder="Temporary password"
+          type="password"
+          onInput={(e) => set_temp_pw(e.currentTarget.value)}
+        />
+      </div>
+      <div style={styles.item_buttons}>
+        <button
+          onClick={async () => {
+            const pull_result = await pull(temp_pw(), pin());
+
+            if (pull_result.err) {
+              console.error(pull_result.val);
+
+              return set_err(pull_result.val);
+            }
+
+            console.log("Values: ", pull_result.val);
+          }}
+        >
+          Download
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function ExportTab() {
   return (
@@ -54,23 +154,6 @@ function ExportTab() {
             }}
           >
             Export
-          </button>
-        </div>
-      </div>
-
-      <div class={styles.export_cta}>
-        <p>Push to sync server</p>
-        <div style={styles.item_buttons}>
-          <button
-            onClick={async () => {
-              const res = await push();
-
-              if (res.err) {
-                set_err(res.val);
-              }
-            }}
-          >
-            Push
           </button>
         </div>
       </div>
@@ -339,14 +422,32 @@ async function export_ledger(): Promise<Result<void, string>> {
   }
 }
 
-async function push(): Promise<Result<void, string>> {
-  try {
-    await invoke("push");
+type PushResponse = {
+  pin: string;
+};
 
-    return Ok.EMPTY;
+async function push(tempPw: string): Promise<Result<string, string>> {
+  try {
+    const resp = await invoke<PushResponse>("push_s", { tempPw });
+
+    return Ok(resp.pin);
   } catch (err) {
     if (typeof err !== "string") {
       return Err(`An unknown error occurred: ${JSON.stringify(err)}`);
+    }
+
+    return Err(err);
+  }
+}
+
+async function pull(tempPw: string, pin: string): Promise<Result<any, string>> {
+  try {
+    const values = await invoke<any>("pull", { tempPw, pin });
+
+    return Ok(values);
+  } catch (e) {
+    if (typeof err !== "string") {
+      return Err(`An unknown error occurred: ${JSON.stringify(e)}`);
     }
 
     return Err(err);

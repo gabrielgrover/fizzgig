@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::commands::SavedPassword;
-use local_ledger::LocalLedger;
+use local_ledger::{LedgerDump, LocalLedger};
 use tokio::sync::{mpsc, oneshot};
 
 pub enum LocalLedgerMessage {
@@ -34,6 +34,9 @@ pub enum LocalLedgerMessage {
     GetLedgerDir {
         respond_to: oneshot::Sender<Result<PathBuf, LocalLedgerWorkerErr>>,
     },
+    GetLedgerContent {
+        respond_to: oneshot::Sender<Result<LedgerDump, LocalLedgerWorkerErr>>,
+    },
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -43,6 +46,7 @@ pub enum LocalLedgerWorkerErr {
     AddEntryErr(String),
     ListEntriesErr(String),
     GetEntryErr(String),
+    GetLedgerContent(String),
 }
 
 impl ToString for LocalLedgerWorkerErr {
@@ -53,6 +57,7 @@ impl ToString for LocalLedgerWorkerErr {
             LocalLedgerWorkerErr::AddEntryErr(msg) => msg.to_owned(),
             LocalLedgerWorkerErr::ListEntriesErr(msg) => msg.to_owned(),
             LocalLedgerWorkerErr::GetEntryErr(msg) => msg.to_owned(),
+            LocalLedgerWorkerErr::GetLedgerContent(msg) => msg.to_owned(),
         }
     }
 }
@@ -188,12 +193,9 @@ impl LocalLedgerWorker {
                 let pw_result = self
                     .local_ledger
                     .as_mut()
-                    .map_or(
-                        Err(LocalLedgerWorkerErr::GetEntryErr(
-                            "LocalLedgerWorker has not been started".to_string(),
-                        )),
-                        |ll| Ok(ll),
-                    )
+                    .ok_or(LocalLedgerWorkerErr::GetEntryErr(
+                        "LocalLedgerWorker has not been started".to_string(),
+                    ))
                     .and_then(|ll| {
                         let saved_password = SavedPassword {
                             pw,
@@ -256,6 +258,24 @@ impl LocalLedgerWorker {
                     // TODO: retry
                     println!("Failed to get entry");
                 });
+            }
+
+            LocalLedgerMessage::GetLedgerContent { respond_to } => {
+                let ledger_dump = self
+                    .local_ledger
+                    .as_mut()
+                    .ok_or(LocalLedgerWorkerErr::GetLedgerContent(
+                        "LocalLedgerWorker has not been started".to_string(),
+                    ))
+                    .and_then(|ll| {
+                        ll.doc_dump()
+                            .map_err(|e| LocalLedgerWorkerErr::GetLedgerContent(e.to_string()))
+                    });
+
+                let _ = respond_to.send(ledger_dump).map_err(|_| {
+                    println!("Failed to get ledger dump");
+                });
+                //unimplemented!()
             }
         }
     }

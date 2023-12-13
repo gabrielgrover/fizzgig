@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use local_ledger::LedgerDump;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::local_ledger_worker::{
@@ -121,5 +122,14 @@ impl LocalLedgerWorkerHandler {
 
         rx.await
             .map_err(|err| LocalLedgerWorkerErr::ResponseErr(err.to_string()))?
+    }
+
+    pub async fn get_doc_dump(&self) -> Result<LedgerDump, LocalLedgerWorkerErr> {
+        let (respond_to, rx) = oneshot::channel();
+        let msg = LocalLedgerMessage::GetLedgerContent { respond_to };
+        let _ = self.messenger.send(msg).await;
+
+        rx.await
+            .map_err(|e| LocalLedgerWorkerErr::GetLedgerContent(e.to_string()))?
     }
 }

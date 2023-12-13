@@ -13,6 +13,8 @@ use pwhash::bcrypt;
 use document::Document;
 use utility::LocalLedgerError;
 
+use crate::LedgerDump;
+
 #[derive(Debug)]
 pub struct LocalLedger<T> {
     pub name: String,
@@ -254,9 +256,13 @@ where
         self.assoc_doc.get_data_dir()
     }
 
-    // pub fn check_pw(&self, candidate_pw: &str) -> bool {
-    //     bcrypt::verify(candidate_pw, &self.meta_doc.read_data()?.pw_hash)
-    // }
+    /// Retrieves all ledger's contents into a Read implementation.  Each doc is separated by a `\n` char
+    pub fn doc_dump(&self) -> Result<LedgerDump, LocalLedgerError> {
+        let src_dir = self.get_ledger_dir()?;
+        let ld = LedgerDump::new(src_dir).map_err(|msg| LocalLedgerError::new(&msg))?;
+
+        Ok(ld)
+    }
 }
 
 fn decrypt_load_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(

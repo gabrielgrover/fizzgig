@@ -8,15 +8,23 @@ mod llw_handler;
 mod local_ledger_worker;
 
 use commands::{
-    add_entry, export_ledger, generate_pw, greet, list, open_collection, push, read_entry,
-    regen_pw, remove_entry,
+    add_entry, export_ledger, generate_pw, greet, list, open_collection, pull, push, push_s,
+    read_entry, regen_pw, remove_entry,
 };
+
+use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter};
 
 use land_strider_sdk::*;
 use llw_handler::LocalLedgerWorkerHandler;
 
 #[tokio::main]
 async fn main() {
+    let filter = EnvFilter::new("info");
+    let s = tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::layer());
+    tracing::subscriber::set_global_default(s).expect("setting default tracing subscriber failed");
+
     let land_strider_config = LandStriderConfig::new("localhost", 3001);
     let land_strider = LandStrider::new(land_strider_config);
 
@@ -33,7 +41,9 @@ async fn main() {
             regen_pw,
             remove_entry,
             export_ledger,
-            push
+            push,
+            pull,
+            push_s
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())
