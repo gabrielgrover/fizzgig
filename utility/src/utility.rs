@@ -18,14 +18,29 @@ pub fn generate_pin() -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub enum LocalLedgerErrorType {
+    Default,
+    Confict,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct LocalLedgerError {
     pub message: String,
+    pub err_type: LocalLedgerErrorType,
 }
 
 impl LocalLedgerError {
     pub fn new(m: &str) -> Self {
         LocalLedgerError {
             message: m.to_string(),
+            err_type: LocalLedgerErrorType::Default,
+        }
+    }
+
+    pub fn conflict(m: &str) -> Self {
+        LocalLedgerError {
+            message: m.to_string(),
+            err_type: LocalLedgerErrorType::Confict,
         }
     }
 }

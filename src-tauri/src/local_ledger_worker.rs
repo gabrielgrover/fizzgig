@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
 use crate::commands::SavedPassword;
+//use bytes::Bytes;
 use local_ledger::{LedgerDump, LocalLedger};
 use tokio::sync::{mpsc, oneshot};
+//use tokio_stream::Stream;
 
 pub enum LocalLedgerMessage {
     Start {
@@ -37,6 +39,11 @@ pub enum LocalLedgerMessage {
     GetLedgerContent {
         respond_to: oneshot::Sender<Result<LedgerDump, LocalLedgerWorkerErr>>,
     },
+    // Merge {
+    //     byte_stream:
+    //         Pin<Box<dyn Stream<Item = Result<Bytes, Box<dyn std::error::Error + Send>>> + Send>>,
+    //     respond_to: oneshot::Sender<Result<(), LocalLedgerWorkerErr>>,
+    // },
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -276,7 +283,23 @@ impl LocalLedgerWorker {
                     println!("Failed to get ledger dump");
                 });
                 //unimplemented!()
-            }
+            } // LocalLedgerMessage::Merge { respond_to } => {
+              //     let ledger_dump = self
+              //         .local_ledger
+              //         .as_mut()
+              //         .ok_or(LocalLedgerWorkerErr::GetLedgerContent(
+              //             "LocalLedgerWorker has not been started".to_string(),
+              //         ))
+              //         .and_then(|ll| {
+              //             ll.merge()
+              //                 .await
+              //                 .map_err(|e| LocalLedgerWorkerErr::GetLedgerContent(e.to_string()))
+              //         });
+
+              //     let _ = respond_to.send(ledger_dump).map_err(|_| {
+              //         println!("Failed to get ledger dump");
+              //     });
+              // }
         }
     }
 }

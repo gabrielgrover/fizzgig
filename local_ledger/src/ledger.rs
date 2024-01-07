@@ -1,19 +1,21 @@
+use crate::LedgerDump;
 use age::secrecy::Secret;
+use document::Document;
+use pwhash::bcrypt;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::Value;
 use std::{
     collections::HashMap,
     fmt::Debug,
     io::{Read, Write},
     num::NonZeroUsize,
     path::PathBuf,
+    pin::Pin,
 };
+use tokio_stream::{Stream, StreamExt};
+use utility::{LocalLedgerError, LocalLedgerErrorType};
 
-use pwhash::bcrypt;
-
-use document::Document;
-use utility::LocalLedgerError;
-
-use crate::LedgerDump;
+const CONFLICT_SUFFIX: &str = "_conflicts";
 
 #[derive(Debug)]
 pub struct LocalLedger<T> {
@@ -21,6 +23,9 @@ pub struct LocalLedger<T> {
     doc_cache: lru::LruCache<String, Document<T>>,
     assoc_doc: Document<HashMap<String, String>>,
     meta_doc: Document<LocalLedgerMetaData>,
+    /// This field functions as an assoc doc for conflicts
+    merge_conflict_doc: Document<HashMap<String, String>>,
+    conflict_dir: String,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -37,19 +42,15 @@ where
             Some(size) => Ok(size),
             None => Err(LocalLedgerError::new("Failed to initialize doc cache")),
         }?;
-
         let doc_cache = lru::LruCache::new(cache_size);
-
         let assoc_doc = create_assoc_doc(name);
-
+        let conflict_dir = format!("{}_{}", name, CONFLICT_SUFFIX);
+        let merge_conflict_doc = create_conflict_doc(&conflict_dir);
         let maybe_meta_doc = try_load_meta_doc(name);
 
         let meta_doc = match maybe_meta_doc {
             Some(loaded_meta_doc) => {
-                println!("Meta doc loaded");
-
                 let loaded_pw_hash = loaded_meta_doc.read_data()?.pw_hash.as_str();
-
                 let correct_pw = bcrypt::verify(ledger_password.as_str(), loaded_pw_hash);
 
                 if !correct_pw {
@@ -59,8 +60,6 @@ where
                 loaded_meta_doc
             }
             None => {
-                println!("Creating meta doc");
-
                 let pw_hash = bcrypt::hash(&ledger_password).map_err(|err| {
                     LocalLedgerError::new(&format!(
                         "LocalLedger creation failed: {}",
@@ -80,6 +79,8 @@ where
             doc_cache,
             assoc_doc,
             meta_doc,
+            merge_conflict_doc,
+            conflict_dir,
         })
     }
 
@@ -91,9 +92,6 @@ where
 
         let label_already_in_use = self.assoc_doc.read_data()?.contains_key(label);
 
-        println!("assoc doc: {:?}", self.assoc_doc.read_data());
-        println!("label_already_in_use: {}", label_already_in_use);
-
         if label_already_in_use {
             return Err(LocalLedgerError::new("Labels must be unique"));
         }
@@ -101,7 +99,6 @@ where
         let mut encrypted_doc = Document::<T>::new(&self.name);
 
         encrypted_doc.update(data);
-
         encrypt_store_doc(&mut encrypted_doc, &self.meta_doc.read_data()?.pw_hash)?;
 
         let doc_uuid = encrypted_doc.get_uuid();
@@ -109,7 +106,6 @@ where
         self.doc_cache.put(doc_uuid.clone(), encrypted_doc);
 
         let label_doc_uuid_map = self.assoc_doc.read_mut()?;
-
         let _ = label_doc_uuid_map.insert(label.to_owned(), doc_uuid.clone());
 
         self.assoc_doc.store()?;
@@ -120,7 +116,6 @@ where
     /// Reads data in a document
     pub fn read<'a>(&'a mut self, uuid: String) -> Result<&'a T, LocalLedgerError> {
         let doc_is_cached = self.doc_cache.contains(&uuid);
-
         let key = &self.meta_doc.read_data()?.pw_hash;
 
         if doc_is_cached {
@@ -206,35 +201,32 @@ where
     }
 
     pub fn remove(&mut self, entry_name: &str) -> Result<(), LocalLedgerError> {
-        let uuid = self.assoc_doc.read_data()?.get(entry_name).map_or(
-            Err(LocalLedgerError::new(&format!(
+        let uuid = self
+            .assoc_doc
+            .read_data()?
+            .get(entry_name)
+            .ok_or(LocalLedgerError::new(&format!(
                 "Ledger entry with name: {} does not exist",
                 entry_name
-            ))),
-            |uuid| Ok(uuid.as_str()),
-        )?;
-
+            )))?
+            .as_str();
         let doc_is_cached = self.doc_cache.contains(uuid);
 
         if doc_is_cached {
-            let cached_doc = self.doc_cache.get_mut(uuid).map_or(
-                Err(LocalLedgerError::new("Failed to get doc from cached")),
-                |d| Ok(d),
-            )?;
+            let cached_doc = self
+                .doc_cache
+                .get_mut(uuid)
+                .ok_or(LocalLedgerError::new("Failed to get doc from cache"))?;
 
             cached_doc.remove()?;
 
             let _ = self.doc_cache.pop_entry(uuid);
         } else {
-            let mut doc = Document::<T>::new_alt(&self.name, uuid);
-
-            doc.remove()?;
+            Document::<T>::remove_doc(&self.name, uuid)?;
         }
 
         let assoc_doc = self.assoc_doc.read_mut()?;
-
         let _ = assoc_doc.remove(entry_name);
-
         let _ = self.assoc_doc.store()?;
 
         Ok(())
@@ -242,7 +234,6 @@ where
 
     pub fn list_entry_labels<'a>(&'a self) -> Result<Vec<&'a str>, LocalLedgerError> {
         let assoc_doc = self.assoc_doc.read_data()?;
-
         let mut labels = Vec::new();
 
         for key in assoc_doc.keys() {
@@ -263,14 +254,76 @@ where
 
         Ok(ld)
     }
+
+    pub async fn merge<S>(&mut self, mut s: S) -> Result<(), String>
+    where
+        S: Stream<Item = Result<Value, Box<dyn std::error::Error>>> + Unpin,
+    {
+        while let Some(item) = s.next().await {
+            let val = item.map_err(|e| e.to_string())?;
+            let uuid = assert_str(&val["uuid"])?;
+
+            let store_result = match uuid.as_str() {
+                "ASSOC_DOC" => {
+                    let mut incomming_assoc_doc =
+                        serde_json::from_value::<Document<HashMap<String, String>>>(val)
+                            .map_err(|e| e.to_string())?;
+
+                    incomming_assoc_doc.store().map(|_| ()) //.map_err(|e| e.to_string())?;
+                }
+
+                "META_DOC" => {
+                    let mut incomming_meta_doc =
+                        serde_json::from_value::<Document<LocalLedgerMetaData>>(val)
+                            .map_err(|e| e.to_string())?;
+
+                    incomming_meta_doc.store().map(|_| ()) //map_err(|e| e.to_string())?;
+                }
+
+                _ => {
+                    let mut incomming_ledger_doc =
+                        serde_json::from_value::<Document<T>>(val).map_err(|e| e.to_string())?;
+
+                    encrypt_store_doc(
+                        &mut incomming_ledger_doc,
+                        &self
+                            .meta_doc
+                            .read_data()
+                            .map_err(|e| e.to_string())?
+                            .pw_hash,
+                    )
+                    .map(|_| ())
+                    //.map_err(|e| e.to_string())?;
+                }
+            };
+
+            if store_result.is_err() {
+                let err = store_result.unwrap_err();
+
+                match err.err_type {
+                    LocalLedgerErrorType::Confict => {
+                        //handle conflict
+
+                        return Err(err.to_string());
+                    }
+
+                    LocalLedgerErrorType::Default => {
+                        return Err(err.to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn decrypt_load_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
-    loaded_doc: &mut Document<T>,
+    curr_doc: &mut Document<T>,
     uuid: &str,
     key: &str,
 ) -> Result<(), LocalLedgerError> {
-    loaded_doc.decrypt_load(&uuid, |encrypted_data| {
+    let loaded_doc = Document::<T>::decrypt_load(curr_doc.label(), &uuid, |encrypted_data| {
         let decryptor = match age::Decryptor::new(&encrypted_data[..]).map_err(|err| {
             LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
         })? {
@@ -279,9 +332,11 @@ fn decrypt_load_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
         }?;
 
         let mut decrypted = vec![];
-        let mut reader = decryptor.decrypt(&Secret::new(key.to_owned()), None).map_err(|err| {
-            LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
-        })?;
+        let mut reader = decryptor
+            .decrypt(&Secret::new(key.to_owned()), None)
+            .map_err(|err| {
+                LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
+            })?;
 
         reader.read_to_end(&mut decrypted).map_err(|err| {
             LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
@@ -289,6 +344,8 @@ fn decrypt_load_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
 
         Ok(decrypted)
     })?;
+
+    let _ = std::mem::replace(curr_doc, loaded_doc);
 
     Ok(())
 }
@@ -320,19 +377,24 @@ fn encrypt_store_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
 
 /// Attempts to create an assoc doc.  If it already exists it is loaded into memory.  
 fn create_assoc_doc(ledger_name: &str) -> Document<HashMap<String, String>> {
-    let mut doc = Document::<HashMap<String, String>>::new(ledger_name);
-    doc.append_uuid("ASSOC_DOC");
+    Document::<HashMap<String, String>>::try_load(ledger_name, "ASSOC_DOC").unwrap_or_else(|| {
+        let mut assoc_doc = Document::new(ledger_name);
 
-    let _ = doc.try_load("ASSOC_DOC");
+        assoc_doc.append_uuid("ASSOC_DOC");
 
-    doc
+        assoc_doc
+    })
+}
+
+/// Attempts to create a conflict doc.  If it already exists it is loaded into memory.  
+fn create_conflict_doc(name: &str) -> Document<HashMap<String, String>> {
+    Document::<HashMap<String, String>>::try_load(name, "CONFLICT_DOC")
+        .unwrap_or(Document::new(name))
 }
 
 fn try_load_meta_doc(ledger_name: &str) -> Option<Document<LocalLedgerMetaData>> {
-    let mut meta_doc = Document::<LocalLedgerMetaData>::new(ledger_name);
-
-    match meta_doc.load("META_DOC") {
-        Ok(_) => Some(meta_doc),
+    match Document::<LocalLedgerMetaData>::load(ledger_name, "META_DOC") {
+        Ok(meta_doc) => Some(meta_doc),
         Err(_err) => None,
     }
 }
@@ -343,6 +405,14 @@ fn create_meta_doc(ledger_name: &str) -> Document<LocalLedgerMetaData> {
     meta_doc.append_uuid("META_DOC");
 
     meta_doc
+}
+
+fn assert_str(v: &Value) -> Result<String, String> {
+    match v {
+        Value::String(s) => Ok(s.to_owned()),
+
+        _ => Err("Value is not a string".to_string()),
+    }
 }
 
 #[cfg(test)]

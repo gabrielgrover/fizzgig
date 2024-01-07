@@ -1,3 +1,3 @@
 mod document;
 
-pub use document::*;
+pub use crate::document::*;

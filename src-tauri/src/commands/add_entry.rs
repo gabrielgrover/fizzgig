@@ -1,13 +1,14 @@
-use crate::llw_handler::LocalLedgerWorkerHandler;
+use crate::app_state::AppState;
 
 #[tauri::command]
 pub async fn add_entry<'a>(
     entry_name: String,
     val: String,
-    state: tauri::State<'a, LocalLedgerWorkerHandler>,
+    app_state: tauri::State<'a, AppState>,
 ) -> Result<(), String> {
-    state
-        .add_entry(&entry_name, &val)
+    app_state
+        .pw_ledger
+        .lock()
         .await
-        .map_err(|err| err.to_string())
+        .add_entry(&entry_name, &val)
 }

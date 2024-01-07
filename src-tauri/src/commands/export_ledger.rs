@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::prelude::*;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
@@ -10,16 +10,11 @@ use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
 use std::os::windows::fs::MetadataExt;
 
-use crate::llw_handler::LocalLedgerWorkerHandler;
+use crate::app_state::AppState;
 
 #[tauri::command]
-pub async fn export_ledger<'a>(
-    state: tauri::State<'a, LocalLedgerWorkerHandler>,
-) -> Result<(), String> {
-    let source_dir = state
-        .get_ledger_dir()
-        .await
-        .map_err(|err| err.to_string())?;
+pub async fn export_ledger<'a>(app_state: tauri::State<'a, AppState>) -> Result<(), String> {
+    let source_dir = app_state.pw_ledger.lock().await.get_ledger_dir()?;
 
     let file_name = "ledger.zip";
 

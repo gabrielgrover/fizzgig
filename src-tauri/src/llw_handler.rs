@@ -14,7 +14,6 @@ pub struct LocalLedgerWorkerHandler {
 impl LocalLedgerWorkerHandler {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel(10);
-
         let llw = LocalLedgerWorker::new(rx);
 
         tokio::spawn(run_llw(llw));
@@ -28,13 +27,11 @@ impl LocalLedgerWorkerHandler {
         master_pw: &str,
     ) -> Result<(), LocalLedgerWorkerErr> {
         let (tx, rx) = oneshot::channel();
-
         let msg = LocalLedgerMessage::Start {
             ledger_name: ledger_name.to_owned(),
             master_pw: master_pw.to_owned(),
             respond_to: tx,
         };
-
         let _ = self.messenger.send(msg).await;
 
         rx.await
@@ -43,13 +40,11 @@ impl LocalLedgerWorkerHandler {
 
     pub async fn add_entry(&self, entry_name: &str, pw: &str) -> Result<(), LocalLedgerWorkerErr> {
         let (respond_to, rx) = oneshot::channel();
-
         let msg = LocalLedgerMessage::AddEntry {
             entry_name: entry_name.to_owned(),
             pw: pw.to_owned(),
             respond_to,
         };
-
         let _ = self.messenger.send(msg).await;
 
         rx.await
@@ -62,13 +57,11 @@ impl LocalLedgerWorkerHandler {
         pw: &str,
     ) -> Result<(), LocalLedgerWorkerErr> {
         let (respond_to, rx) = oneshot::channel();
-
         let msg = LocalLedgerMessage::UpdateEntry {
             entry_name: entry_name.to_owned(),
             pw: pw.to_owned(),
             respond_to,
         };
-
         let _ = self.messenger.send(msg).await;
 
         rx.await
@@ -90,9 +83,7 @@ impl LocalLedgerWorkerHandler {
 
     pub async fn list_entries(&self) -> Result<Vec<String>, LocalLedgerWorkerErr> {
         let (respond_to, rx) = oneshot::channel();
-
         let msg = LocalLedgerMessage::List { respond_to };
-
         let _ = self.messenger.send(msg).await;
 
         rx.await
@@ -101,12 +92,10 @@ impl LocalLedgerWorkerHandler {
 
     pub async fn get_pw(&self, entry_name: &str) -> Result<String, LocalLedgerWorkerErr> {
         let (respond_to, rx) = oneshot::channel();
-
         let msg = LocalLedgerMessage::GetEntry {
             entry_name: entry_name.to_owned(),
             respond_to,
         };
-
         let _ = self.messenger.send(msg).await;
 
         rx.await
@@ -115,9 +104,7 @@ impl LocalLedgerWorkerHandler {
 
     pub async fn get_ledger_dir(&self) -> Result<PathBuf, LocalLedgerWorkerErr> {
         let (respond_to, rx) = oneshot::channel();
-
         let msg = LocalLedgerMessage::GetLedgerDir { respond_to };
-
         let _ = self.messenger.send(msg).await;
 
         rx.await

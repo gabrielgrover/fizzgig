@@ -1,18 +1,15 @@
-use crate::llw_handler::LocalLedgerWorkerHandler;
-use land_strider_sdk::{LandStrider, PushResponse};
+use crate::app_state::AppState;
+use land_strider_sdk::PushResponse;
 
 #[tauri::command]
 pub async fn push_s<'a>(
     temp_pw: String,
-    llw: tauri::State<'a, LocalLedgerWorkerHandler>,
-    land_strider: tauri::State<'a, LandStrider>,
+    app_state: tauri::State<'a, AppState>,
 ) -> Result<PushResponse, String> {
-    let ledger_dump = llw.get_doc_dump().await.map_err(|e| {
-        tracing::error!("Failed to get doc dump {:?}", e);
-        e.to_string()
-    })?;
+    let ledger_dump = app_state.pw_ledger.lock().await.get_doc_dump()?;
 
-    land_strider
+    app_state
+        .land_strider
         .push_s(ledger_dump, temp_pw)
         .await
         .map_err(|e| {

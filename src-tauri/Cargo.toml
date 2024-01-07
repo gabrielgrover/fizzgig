@@ -27,6 +27,7 @@ tracing = "0.1.37"
 tracing-subscriber = "0.3.17"
 utility = { path = "../utility" }
 land_strider_sdk = { path = "../land_strider_sdk" }
+tokio-stream = "0.1.14"
 
 [features]
 # by default Tauri runs in production mode

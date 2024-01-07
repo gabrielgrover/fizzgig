@@ -1,11 +1,10 @@
+use crate::app_state::AppState;
 use passwords::PasswordGenerator;
-
-use crate::llw_handler::LocalLedgerWorkerHandler;
 
 #[tauri::command]
 pub async fn regen_pw<'a>(
     entry_name: String,
-    state: tauri::State<'a, LocalLedgerWorkerHandler>,
+    app_state: tauri::State<'a, AppState>,
 ) -> Result<(), String> {
     let pg = PasswordGenerator {
         length: 10,
@@ -20,8 +19,9 @@ pub async fn regen_pw<'a>(
 
     let pw = pg.generate_one().map_err(|err| err.to_string())?;
 
-    state
-        .update_entry(&entry_name, &pw)
+    app_state
+        .pw_ledger
+        .lock()
         .await
-        .map_err(|err| err.to_string())
+        .update_entry(&entry_name, &pw)
 }

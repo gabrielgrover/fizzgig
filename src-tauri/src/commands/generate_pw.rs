@@ -1,10 +1,7 @@
-use crate::llw_handler::LocalLedgerWorkerHandler;
 use passwords::PasswordGenerator;
 
 #[tauri::command]
-pub async fn generate_pw<'a>(
-    _state: tauri::State<'a, LocalLedgerWorkerHandler>,
-) -> Result<String, String> {
+pub async fn generate_pw<'a>() -> Result<String, String> {
     let pg = PasswordGenerator {
         length: 10,
         numbers: true,

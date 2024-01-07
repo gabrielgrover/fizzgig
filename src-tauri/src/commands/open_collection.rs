@@ -1,13 +1,11 @@
-use crate::llw_handler::LocalLedgerWorkerHandler;
+use crate::app_state::AppState;
 
 #[tauri::command]
 pub async fn open_collection<'a>(
-    ledger_name: String,
     master_pw: String,
-    state: tauri::State<'a, LocalLedgerWorkerHandler>,
+    app_state: tauri::State<'a, AppState>,
 ) -> Result<(), String> {
-    state
-        .start_worker(&ledger_name, &master_pw)
-        .await
-        .map_err(|err| err.to_string())
+    let mut ledger = app_state.pw_ledger.lock().await;
+
+    ledger.start(&master_pw)
 }

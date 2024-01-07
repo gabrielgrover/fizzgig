@@ -1,9 +1,6 @@
-use std::error::Error;
-
+use crate::{pull_stream::PullStream, LandStriderConfig};
 use reqwest::multipart::Form;
-use serde_json::Value;
-
-use crate::LandStriderConfig;
+use std::error::Error;
 
 pub struct LandStrider {
     config: LandStriderConfig,
@@ -18,8 +15,8 @@ impl LandStrider {
         crate::push::push(&self.config, f).await
     }
 
-    pub async fn pull(&self, pin: &str, pw: &str) -> Result<Vec<Value>, Box<dyn Error>> {
-        crate::pull::pull(&self.config, pin, pw).await
+    pub async fn pull_s(&self, pin: &str, pw: &str) -> Result<PullStream, Box<dyn Error>> {
+        crate::pull_s::pull_s(&self.config, pin, pw).await
     }
 
     pub async fn push_s<R: std::io::Read + Send + Sync + 'static>(

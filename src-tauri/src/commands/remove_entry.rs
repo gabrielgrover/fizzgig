@@ -1,12 +1,9 @@
-use crate::llw_handler::LocalLedgerWorkerHandler;
+use crate::app_state::AppState;
 
 #[tauri::command]
 pub async fn remove_entry<'a>(
     entry_name: String,
-    state: tauri::State<'a, LocalLedgerWorkerHandler>,
+    app_state: tauri::State<'a, AppState>,
 ) -> Result<(), String> {
-    state
-        .remove_entry(&entry_name)
-        .await
-        .map_err(|err| err.to_string())
+    app_state.pw_ledger.lock().await.remove_entry(&entry_name)
 }

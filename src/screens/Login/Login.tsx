@@ -13,8 +13,6 @@ import {
 import { master_pass_signal } from "../../signals/master_pass";
 import styles from "./login.module.css";
 
-const COLLECTION_NAME = "First password ledger";
-
 export const Login: Component = () => {
   const { set_master_pw, master_pw } = master_pass_signal;
   const [input, set_input] = createSignal("");
@@ -63,7 +61,6 @@ function start(master_pw: string) {
   return TE.tryCatch(
     () =>
       invoke("open_collection", {
-        ledgerName: COLLECTION_NAME,
         masterPw: master_pw,
       }),
     (err) => {
