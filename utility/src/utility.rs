@@ -30,6 +30,8 @@ pub struct LocalLedgerError {
 }
 
 impl LocalLedgerError {
+    // Might want to deprecate this in favor of thiserror lib
+
     pub fn new(m: &str) -> Self {
         LocalLedgerError {
             message: m.to_string(),
@@ -42,6 +44,10 @@ impl LocalLedgerError {
             message: m.to_string(),
             err_type: LocalLedgerErrorType::Confict,
         }
+    }
+
+    pub fn is_conflict_err(&self) -> bool {
+        self.err_type == LocalLedgerErrorType::Confict
     }
 }
 

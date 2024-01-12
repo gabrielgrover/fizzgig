@@ -13,19 +13,20 @@ use std::{
     pin::Pin,
 };
 use tokio_stream::{Stream, StreamExt};
-use utility::{LocalLedgerError, LocalLedgerErrorType};
+use utility::LocalLedgerError;
 
-const CONFLICT_SUFFIX: &str = "_conflicts";
+const CONFLICT_DIR_SUFFIX: &str = "conflicts";
 
 #[derive(Debug)]
 pub struct LocalLedger<T> {
+    // This is the name of the ledger, but also functions as the label that is used for the
+    // Documents managed by the ledger
     pub name: String,
     doc_cache: lru::LruCache<String, Document<T>>,
-    assoc_doc: Document<HashMap<String, String>>,
+    //assoc_doc: Document<HashMap<String, String>>,
     meta_doc: Document<LocalLedgerMetaData>,
     /// This field functions as an assoc doc for conflicts
     merge_conflict_doc: Document<HashMap<String, String>>,
-    conflict_dir: String,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -43,8 +44,8 @@ where
             None => Err(LocalLedgerError::new("Failed to initialize doc cache")),
         }?;
         let doc_cache = lru::LruCache::new(cache_size);
-        let assoc_doc = create_assoc_doc(name);
-        let conflict_dir = format!("{}_{}", name, CONFLICT_SUFFIX);
+        //let assoc_doc = create_assoc_doc(name);
+        let conflict_dir = format!("{}_{}", name, CONFLICT_DIR_SUFFIX);
         let merge_conflict_doc = create_conflict_doc(&conflict_dir);
         let maybe_meta_doc = try_load_meta_doc(name);
 
@@ -77,38 +78,32 @@ where
         Ok(LocalLedger {
             name: name.to_owned(),
             doc_cache,
-            assoc_doc,
+            //assoc_doc,
             meta_doc,
             merge_conflict_doc,
-            conflict_dir,
         })
     }
 
     /// Creates a new entry to the ledger.  Returning a uuid.
-    pub fn create(&mut self, data: T, label: &str) -> Result<String, LocalLedgerError> {
-        if label.len() == 0 {
+    pub fn create(&mut self, data: T, entry_name: &str) -> Result<String, LocalLedgerError> {
+        if entry_name.len() == 0 {
             return Err(LocalLedgerError::new("Label cannot be empty"));
         }
 
-        let label_already_in_use = self.assoc_doc.read_data()?.contains_key(label);
+        let label_already_in_use = self.entry_name_already_in_use(entry_name)?;
 
         if label_already_in_use {
             return Err(LocalLedgerError::new("Labels must be unique"));
         }
 
         let mut encrypted_doc = Document::<T>::new(&self.name);
-
+        encrypted_doc.append_uuid(entry_name);
         encrypted_doc.update(data);
         encrypt_store_doc(&mut encrypted_doc, &self.meta_doc.read_data()?.pw_hash)?;
 
         let doc_uuid = encrypted_doc.get_uuid();
 
         self.doc_cache.put(doc_uuid.clone(), encrypted_doc);
-
-        let label_doc_uuid_map = self.assoc_doc.read_mut()?;
-        let _ = label_doc_uuid_map.insert(label.to_owned(), doc_uuid.clone());
-
-        self.assoc_doc.store()?;
 
         Ok(doc_uuid)
     }
@@ -137,10 +132,10 @@ where
 
         self.doc_cache.put(uuid.clone(), loaded_doc);
 
-        let cached_doc = self.doc_cache.get(&uuid).map_or(
-            Err(LocalLedgerError::new("Failed to get doc from cache")),
-            |d| Ok(d),
-        )?;
+        let cached_doc = self
+            .doc_cache
+            .get(&uuid)
+            .ok_or(LocalLedgerError::new("Failed to get doc from cache"))?;
 
         cached_doc.read_data()
     }
@@ -149,35 +144,28 @@ where
         &'a mut self,
         entry_name: &str,
     ) -> Result<&'a T, LocalLedgerError> {
-        let uuid = self.assoc_doc.read_data()?.get(entry_name).map_or(
-            Err(LocalLedgerError::new(&format!(
-                "Ledger entry with name: {} does not exist",
-                entry_name
-            ))),
-            |uuid| Ok(uuid),
-        )?;
-
-        self.read(uuid.to_string())
+        self.read(entry_name.to_string())
     }
 
-    /// Updates document for given `label` with given `data`
-    pub fn update(&mut self, label: &str, data: T) -> Result<(), LocalLedgerError> {
-        let uuid = self
-            .assoc_doc
-            .read_data()?
-            .get(label)
-            .map_or(Err(LocalLedgerError::new("Label not found")), |i| Ok(i))?;
-        let doc_is_cached = self.doc_cache.contains(uuid);
+    /// Updates document for given `entry_name` with given `data`
+    pub fn update(&mut self, entry_name: &str, data: T) -> Result<(), LocalLedgerError> {
+        let entry_exists = self.entry_name_already_in_use(entry_name)?;
+
+        if !entry_exists {
+            return Err(LocalLedgerError::new("Entry name not found."));
+        }
+
+        let doc_is_cached = self.doc_cache.contains(entry_name); // entry_name_already_in_use does a cache check, and we do another on this line.  we should fix this later lol
         let key = &self.meta_doc.read_data()?.pw_hash;
 
         if doc_is_cached {
-            let mut cached_doc = self.doc_cache.get_mut(uuid).map_or(
+            let mut cached_doc = self.doc_cache.get_mut(entry_name).map_or(
                 Err(LocalLedgerError::new("Failed to get doc from cached")),
                 |d| Ok(d),
             )?;
 
             if !cached_doc.has_been_decrypted() {
-                decrypt_load_doc(cached_doc, uuid, key)?;
+                decrypt_load_doc(cached_doc, entry_name, key)?;
             }
 
             cached_doc.update(data);
@@ -189,62 +177,47 @@ where
 
         let mut doc = Document::<T>::new(&self.name);
 
-        decrypt_load_doc(&mut doc, uuid, &self.meta_doc.read_data()?.pw_hash)?;
+        decrypt_load_doc(&mut doc, entry_name, &self.meta_doc.read_data()?.pw_hash)?;
 
         doc.update(data);
 
         encrypt_store_doc(&mut doc, &self.meta_doc.read_data()?.pw_hash)?;
 
-        self.doc_cache.put(uuid.to_owned(), doc);
+        self.doc_cache.put(entry_name.to_owned(), doc);
 
         Ok(())
     }
 
     pub fn remove(&mut self, entry_name: &str) -> Result<(), LocalLedgerError> {
-        let uuid = self
-            .assoc_doc
-            .read_data()?
-            .get(entry_name)
-            .ok_or(LocalLedgerError::new(&format!(
-                "Ledger entry with name: {} does not exist",
-                entry_name
-            )))?
-            .as_str();
-        let doc_is_cached = self.doc_cache.contains(uuid);
+        let doc_is_cached = self.doc_cache.contains(entry_name);
 
         if doc_is_cached {
             let cached_doc = self
                 .doc_cache
-                .get_mut(uuid)
+                .get_mut(entry_name)
                 .ok_or(LocalLedgerError::new("Failed to get doc from cache"))?;
 
             cached_doc.remove()?;
 
-            let _ = self.doc_cache.pop_entry(uuid);
+            let _ = self.doc_cache.pop_entry(entry_name);
         } else {
-            Document::<T>::remove_doc(&self.name, uuid)?;
+            Document::<T>::remove_doc(&self.name, entry_name)?;
         }
-
-        let assoc_doc = self.assoc_doc.read_mut()?;
-        let _ = assoc_doc.remove(entry_name);
-        let _ = self.assoc_doc.store()?;
 
         Ok(())
     }
 
-    pub fn list_entry_labels<'a>(&'a self) -> Result<Vec<&'a str>, LocalLedgerError> {
-        let assoc_doc = self.assoc_doc.read_data()?;
-        let mut labels = Vec::new();
-
-        for key in assoc_doc.keys() {
-            labels.push(key.as_str());
-        }
+    pub fn list_entry_labels(&self) -> Result<Vec<String>, LocalLedgerError> {
+        let labels: Vec<String> = Document::<T>::get_all_uuids(&self.name)?
+            .into_iter()
+            .filter(|uuid| uuid != "META_DOC")
+            .collect();
 
         Ok(labels)
     }
 
     pub fn get_ledger_dir(&self) -> Result<PathBuf, LocalLedgerError> {
-        self.assoc_doc.get_data_dir()
+        self.meta_doc.get_data_dir()
     }
 
     /// Retrieves all ledger's contents into a Read implementation.  Each doc is separated by a `\n` char
@@ -264,14 +237,6 @@ where
             let uuid = assert_str(&val["uuid"])?;
 
             let store_result = match uuid.as_str() {
-                "ASSOC_DOC" => {
-                    let mut incomming_assoc_doc =
-                        serde_json::from_value::<Document<HashMap<String, String>>>(val)
-                            .map_err(|e| e.to_string())?;
-
-                    incomming_assoc_doc.store().map(|_| ()) //.map_err(|e| e.to_string())?;
-                }
-
                 "META_DOC" => {
                     let mut incomming_meta_doc =
                         serde_json::from_value::<Document<LocalLedgerMetaData>>(val)
@@ -297,24 +262,29 @@ where
                 }
             };
 
-            if store_result.is_err() {
-                let err = store_result.unwrap_err();
-
-                match err.err_type {
-                    LocalLedgerErrorType::Confict => {
-                        //handle conflict
-
-                        return Err(err.to_string());
-                    }
-
-                    LocalLedgerErrorType::Default => {
-                        return Err(err.to_string());
-                    }
+            if let Err(e) = store_result {
+                if e.is_conflict_err() {
+                    // This is cringe
+                    // probably should migrate
+                    // LocalLedgerError to a thiserror lib impl
+                    // handle conflict
                 }
+
+                return Err(e.to_string());
             }
         }
 
         Ok(())
+    }
+
+    fn entry_name_already_in_use(&self, entry_name: &str) -> Result<bool, LocalLedgerError> {
+        let in_cache = self.doc_cache.contains(entry_name);
+
+        if in_cache {
+            return Ok(true);
+        }
+
+        Document::<T>::doc_exists(&self.name, entry_name)
     }
 }
 
@@ -375,21 +345,24 @@ fn encrypt_store_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
     Ok(())
 }
 
-/// Attempts to create an assoc doc.  If it already exists it is loaded into memory.  
-fn create_assoc_doc(ledger_name: &str) -> Document<HashMap<String, String>> {
-    Document::<HashMap<String, String>>::try_load(ledger_name, "ASSOC_DOC").unwrap_or_else(|| {
-        let mut assoc_doc = Document::new(ledger_name);
-
-        assoc_doc.append_uuid("ASSOC_DOC");
-
-        assoc_doc
-    })
-}
+// /// Attempts to create an assoc doc.  If it already exists it is loaded into memory.
+// fn create_assoc_doc(ledger_name: &str) -> Document<HashMap<String, String>> {
+//     Document::<HashMap<String, String>>::try_load(ledger_name, "ASSOC_DOC").unwrap_or_else(|| {
+//         let mut assoc_doc = Document::new(ledger_name);
+//         assoc_doc.append_uuid("ASSOC_DOC");
+//
+//         assoc_doc
+//     })
+// }
 
 /// Attempts to create a conflict doc.  If it already exists it is loaded into memory.  
 fn create_conflict_doc(name: &str) -> Document<HashMap<String, String>> {
-    Document::<HashMap<String, String>>::try_load(name, "CONFLICT_DOC")
-        .unwrap_or(Document::new(name))
+    Document::<HashMap<String, String>>::try_load(name, "CONFLICT_DOC").unwrap_or_else(|| {
+        let mut conf_doc = Document::new(name);
+        conf_doc.append_uuid("CONFLICT_DOC");
+
+        conf_doc
+    })
 }
 
 fn try_load_meta_doc(ledger_name: &str) -> Option<Document<LocalLedgerMetaData>> {

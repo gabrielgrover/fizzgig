@@ -38,45 +38,23 @@ where
         }
     }
 
-    /// Updates the fields of a Document
-    pub fn update<'a>(&'a mut self, updates: T) -> &'a mut Self {
-        self.data = updates;
-
-        self
-    }
-
-    /// Saves Document to filesystem
-    pub fn store<'a>(&'a mut self) -> Result<&'a Self, LocalLedgerError> {
-        if self.encrypted && !self.has_been_decrypted {
-            return Err(LocalLedgerError::new(
-                "Failed to store.  Document has been encrypted.  Try store_encrypted instead.",
-            ));
+    /// Creates a document with specified label and uuid
+    pub fn new_alt(label: &str, uuid: &str) -> Self {
+        // This name is kinda cringe.  I was torn here.  Thought of using an enum to get a pseudo
+        // overloaded `new` method, but it felt like overkill.  I do not see anything other than
+        // label and uuid needing to be provided to a constructor, but we will just have to wait
+        // and see.
+        Document {
+            uuid: uuid.to_owned(),
+            rev: Default::default(),
+            data: Default::default(),
+            seq: 0i64,
+            label: label.to_owned(),
+            encrypted_data: Default::default(),
+            encrypted: false,
+            has_been_decrypted: false,
+            rev_history: vec![],
         }
-
-        self.do_store()
-    }
-
-    /// Saves Document to filesystem, but calls encrypt transform function before writing to disk.
-    ///
-    /// If successfull, this method clears the data currently being held in the Document.  Calling `read_data` afterward will give you default values and will not match what was saved to disk.  You must call `decrypt_load` in order to get the data again.
-    pub fn store_encrypted<'a, F>(&'a mut self, encrypt: F) -> Result<&'a Self, LocalLedgerError>
-    where
-        F: Fn(Vec<u8>) -> Result<Vec<u8>, LocalLedgerError>,
-    {
-        let data = self.stringify_data()?;
-        let encrypted_data = encrypt(data.into_bytes())?;
-
-        self.encrypted_data = encrypted_data;
-        self.encrypted = true;
-
-        // If we make the has_been_decrypted field public we need to write a test for it
-        self.has_been_decrypted = false;
-        self.do_store()
-    }
-
-    /// Removes Document from filesystem
-    pub fn remove(&mut self) -> Result<(), LocalLedgerError> {
-        Document::<T>::remove_doc(&self.label, &self.uuid)
     }
 
     pub fn remove_doc(label: &str, uuid: &str) -> Result<(), LocalLedgerError> {
@@ -104,6 +82,9 @@ where
 
     /// Tries to load document.  If it doesn't exist None is returned.
     pub fn try_load(label: &str, uuid: &str) -> Option<Self> {
+        // If dir doesn't exist it is created.  Feels weird that a method
+        // called try_load will sometimes make a write (creating a dir)
+        // is this cringe?
         match get_or_create_doc_dir(label) {
             Ok(mut path) => {
                 path.push(format!("{}.json", uuid));
@@ -148,6 +129,88 @@ where
         //let _ = std::mem::replace(self, parsed_doc);
 
         Ok(parsed_doc)
+    }
+
+    pub fn doc_exists(label: &str, uuid: &str) -> Result<bool, LocalLedgerError> {
+        let mut path = get_dir_path(label)?;
+        path.push(format!("{}.json", uuid));
+
+        Ok(path.exists())
+    }
+
+    pub fn get_all_uuids(label: &str) -> Result<Vec<String>, LocalLedgerError> {
+        let path = get_dir_path(label)?;
+        let doc_uuids = std::fs::read_dir(path)
+            .map_err(|e| LocalLedgerError::new(&e.to_string()))?
+            .try_fold(
+                Vec::<String>::new(),
+                |mut accum, dir_entry_result| match dir_entry_result {
+                    Ok(dir_entry) => {
+                        if dir_entry.path().is_dir() {
+                            return Ok(accum);
+                        }
+
+                        let path = dir_entry.path();
+
+                        let file_name = path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .ok_or(LocalLedgerError::new("Failed to find document uuid"))?;
+
+                        accum.push(file_name.to_string());
+
+                        Ok(accum)
+                    }
+
+                    Err(e) => Err(LocalLedgerError::new(&format!(
+                        "Failed to find ledger uuids: {}",
+                        e.to_string()
+                    ))),
+                },
+            )?;
+
+        Ok(doc_uuids)
+    }
+
+    /// Updates the fields of a Document
+    pub fn update<'a>(&'a mut self, updates: T) -> &'a mut Self {
+        self.data = updates;
+
+        self
+    }
+
+    /// Saves Document to filesystem
+    pub fn store<'a>(&'a mut self) -> Result<&'a Self, LocalLedgerError> {
+        if self.encrypted && !self.has_been_decrypted {
+            return Err(LocalLedgerError::new(
+                "Failed to store.  Document has been encrypted.  Try store_encrypted instead.",
+            ));
+        }
+
+        self.do_store()
+    }
+
+    /// Saves Document to filesystem, but calls encrypt transform function before writing to disk.
+    ///
+    /// If successfull, this method clears the data currently being held in the Document.  Calling `read_data` afterward will give you default values and will not match what was saved to disk.  You must call `decrypt_load` in order to get the data again.
+    pub fn store_encrypted<'a, F>(&'a mut self, encrypt: F) -> Result<&'a Self, LocalLedgerError>
+    where
+        F: Fn(Vec<u8>) -> Result<Vec<u8>, LocalLedgerError>,
+    {
+        let data = self.stringify_data()?;
+        let encrypted_data = encrypt(data.into_bytes())?;
+
+        self.encrypted_data = encrypted_data;
+        self.encrypted = true;
+
+        // If we make the has_been_decrypted field public we need to write a test for it
+        self.has_been_decrypted = false;
+        self.do_store()
+    }
+
+    /// Removes Document from filesystem
+    pub fn remove(&mut self) -> Result<(), LocalLedgerError> {
+        Document::<T>::remove_doc(&self.label, &self.uuid)
     }
 
     /// Return read only Document data
