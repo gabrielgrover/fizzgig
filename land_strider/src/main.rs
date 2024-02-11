@@ -69,13 +69,13 @@ async fn push(
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
     {
-        let name = field.name().map_or(
-            Err((
+        let name = field
+            .name()
+            .ok_or((
                 StatusCode::BAD_REQUEST,
                 "Form fields must have a name".to_string(),
-            )),
-            |i| Ok(i.to_string()),
-        )?;
+            ))?
+            .to_string();
 
         let data = field
             .bytes()
@@ -195,7 +195,6 @@ async fn pull(State(state): State<AppState>, params: Query<PullReqParams>) -> im
     let sync_job = jobs
         .remove(pin)
         .ok_or((StatusCode::BAD_REQUEST, "invalid credentials".to_string()))?;
-
     let hashed_pw = sync_job
         .get("pw")
         .ok_or((
@@ -205,7 +204,6 @@ async fn pull(State(state): State<AppState>, params: Query<PullReqParams>) -> im
         .and_then(|b| {
             std::str::from_utf8(b).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         })?;
-
     let correct_pw = pwhash::bcrypt::verify(pass, hashed_pw);
 
     if !correct_pw {

@@ -99,6 +99,8 @@ impl PasswordLedgerHandler {
             .as_mut()
             .ok_or("Ledger has not been started".to_string())?;
 
+        tracing::info!("entry_name: {}", entry_name);
+
         password_ledger
             .read_by_entry_name(entry_name)
             .map(|saved_pw| saved_pw.pw.clone())
@@ -132,7 +134,7 @@ impl PasswordLedgerHandler {
             .as_mut()
             .ok_or("Ledger has not been started".to_string())?;
 
-        password_ledger.merge(s).await?;
+        password_ledger.merge(s).await.map_err(|e| e.to_string())?;
 
         Ok(())
     }

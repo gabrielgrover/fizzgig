@@ -197,8 +197,8 @@ where
     where
         F: Fn(Vec<u8>) -> Result<Vec<u8>, LocalLedgerError>,
     {
-        let data = self.stringify_data()?;
-        let encrypted_data = encrypt(data.into_bytes())?;
+        let bytes = self.data_to_bytes()?;
+        let encrypted_data = encrypt(bytes)?;
 
         self.encrypted_data = encrypted_data;
         self.encrypted = true;
@@ -272,9 +272,14 @@ where
         &self.label
     }
 
+    pub fn check_for_conflict(&self, other_doc: &Document<T>) -> bool {
+        let conflict_present = check_rev_history(&self, other_doc);
+
+        conflict_present
+    }
+
     fn do_store<'a>(&'a mut self) -> Result<&'a Self, LocalLedgerError> {
         let new_rev = generate_id();
-
         self.seq += 1;
 
         if self.seq > 1 {
@@ -283,7 +288,6 @@ where
         }
 
         self.rev = new_rev;
-
         let mut doc_json =
             serde_json::to_value(&self).map_err(|e| LocalLedgerError::new(&e.to_string()))?;
 
@@ -292,7 +296,6 @@ where
             // This is probably a better way to do this... YOLO!
             let data_json = serde_json::to_value(T::default())
                 .map_err(|e| LocalLedgerError::new(&e.to_string()))?;
-
             doc_json["data"] = data_json;
         }
 
@@ -302,15 +305,13 @@ where
                 serde_err.to_string()
             ))
         })?;
-
         let mut path = get_or_create_doc_dir(&self.label)?;
         path.push(format!("{}.json", self.uuid));
-
         let file_exists = path.exists();
         let mut doc_file = get_or_create_doc_file(&path)?;
 
         if file_exists {
-            check_for_conflict::<T>(&mut doc_file, &self.rev_history, &self.rev)?;
+            do_check_for_conflict::<T>(&mut doc_file, &self.rev_history, &self.rev)?;
         }
 
         let doc_bytes = doc_json_str.as_bytes();
@@ -328,15 +329,13 @@ where
         Ok(self)
     }
 
-    fn stringify_data(&self) -> Result<String, LocalLedgerError> {
-        let data = serde_json::to_string(&self.data).map_err(|serde_err| {
+    fn data_to_bytes(&self) -> Result<Vec<u8>, LocalLedgerError> {
+        serde_json::to_vec(&self.data).map_err(|serde_err| {
             LocalLedgerError::new(&format!(
                 "Failed to serialize document: {:?}",
                 serde_err.to_string()
             ))
-        })?;
-
-        Ok(data)
+        })
     }
 }
 
@@ -368,6 +367,8 @@ fn get_or_create_doc_dir(doc_label: &str) -> Result<PathBuf, LocalLedgerError> {
 
     Ok(path)
 }
+
+//fn get_or_create_temp_doc_dir(doc_label: &str) -
 
 fn get_dir_path(doc_label: &str) -> Result<PathBuf, LocalLedgerError> {
     let mut base_dir = dirs::home_dir().map_or(
@@ -404,7 +405,7 @@ fn parse_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
     Ok(doc)
 }
 
-fn check_for_conflict<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
+fn do_check_for_conflict<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
     doc_file: &mut std::fs::File,
     new_rev_history: &Vec<String>,
     new_rev: &str,
@@ -445,6 +446,32 @@ fn check_for_conflict<T: Clone + Serialize + DeserializeOwned + Default + Debug>
     })?;
 
     Ok(())
+}
+
+/// Check rev history for conflicts.  Returning true if there are conflict and false otherwise
+fn check_rev_history<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
+    our_doc: &Document<T>,
+    other_doc: &Document<T>,
+) -> bool {
+    // TODO We got dup code.  with logic in the body of do_check_for_conflict
+    let other_rev_history = (&other_doc.rev_history).into_iter();
+    let our_rev_history = (&our_doc.rev_history).into_iter();
+
+    if other_rev_history.len() >= our_rev_history.len() {
+        let mut side_by_side_history = our_rev_history
+            .chain(vec![&our_doc.rev])
+            .zip(other_rev_history.chain(vec![&other_doc.rev]));
+
+        while let Some((rev_1, rev_2)) = side_by_side_history.next() {
+            if &rev_1 != &rev_2 {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    true
 }
 
 #[cfg(test)]
