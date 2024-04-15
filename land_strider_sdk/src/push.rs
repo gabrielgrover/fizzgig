@@ -19,8 +19,8 @@ pub enum PushErr {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct PushResponse {
-    success: bool,
-    pin: String,
+    pub success: bool,
+    pub pin: String,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]

@@ -224,6 +224,13 @@ where
     where
         S: Stream<Item = Result<Value, Box<dyn std::error::Error>>> + Unpin,
     {
+        // This method is pretty beefy.  Probably should clean it up at some point.
+        // I suppose this is an apology to my future self or whoever is dumb enough
+        // to work on this
+        let mut meta_doc_has_been_stored = false;
+        let mut temp_stored_uuids: Vec<String> = vec![];
+        let mut conflict_uuids: Vec<String> = vec![];
+
         while let Some(item) = s.next().await {
             let val = item.map_err(|e| LocalLedgerError::new(&e.to_string()))?;
             let uuid = assert_str(&val["uuid"]).map_err(|e| LocalLedgerError::new(&e))?;
@@ -240,14 +247,22 @@ where
                 );
 
                 if conflict {
+                    // Conflict in the meta doc probably means that decryption is most likely to
+                    // fail for the new imported docs.  We need to clear everything out and notify
+                    // the user
+                    tracing::warn!("Meta doc conflict detected.");
+                    temp_stored_uuids
+                        .into_iter()
+                        .chain(conflict_uuids.into_iter())
+                        .try_for_each(|uuid| Document::<T>::remove_doc(&self.name, &uuid))?;
+
                     return Err(LocalLedgerError::meta_doc_conflict(
                         "META_DOC conflict found during merge.",
                     ));
                 }
 
-                let temp_uuid = format!("{}_{}", META_DOC_UUID, "temp");
-                incomming_meta_doc.append_uuid(&temp_uuid);
-                incomming_meta_doc.store().map(|_| ())?;
+                incomming_meta_doc.store()?;
+                meta_doc_has_been_stored = true;
 
                 continue;
             }
@@ -257,26 +272,60 @@ where
             let our_ledger_doc = self.get_doc(&uuid)?;
             let conflict = Document::<T>::check_for_conflict(our_ledger_doc, &incomming_ledger_doc);
 
-            tracing::info!("TEST DECRYPTION...");
-            decrypt_load_doc(&mut incomming_ledger_doc, &uuid, self.pw.expose_secret())?;
-            tracing::info!("TEST DECRYPTION success",);
-
             if conflict {
                 // Mark document as conflict
-                let conflict_uuid = format!("{}_{}", &uuid, "conflict");
-                incomming_ledger_doc.append_uuid(&conflict_uuid);
-                encrypt_store_pass_through(&mut incomming_ledger_doc)?;
-
+                incomming_ledger_doc.conflict_store()?;
+                conflict_uuids.push(incomming_ledger_doc.get_uuid());
                 continue;
             }
-            // tracing::info!(
-            //     "TEST DECRYPTION success: {:?}",
-            //     incomming_ledger_doc.read_data()
-            // );
-            let temp_uuid = format!("{}_{}", &uuid, "temp");
-            incomming_ledger_doc.append_uuid(&temp_uuid);
 
-            encrypt_store_pass_through(&mut incomming_ledger_doc)?;
+            if !meta_doc_has_been_stored {
+                incomming_ledger_doc.temp_store()?;
+                temp_stored_uuids.push(incomming_ledger_doc.get_uuid());
+                continue;
+            }
+
+            let key = &self.pw.expose_secret();
+            incomming_ledger_doc.decrypt(|encrypted_data| {
+                 tracing::info!("In decrypt callback");
+                 let decryptor = match age::Decryptor::new(&encrypted_data[..]).map_err(|err| {
+                     tracing::error!("decryptor error: {:?}", err);
+                     LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
+                 })? {
+                     age::Decryptor::Passphrase(d) => Ok(d),
+                     _ => Err(LocalLedgerError::new("Failed to decrypt. Received encrypted data that was secured by some means other than a passphrase."))
+                 }?;
+
+                 tracing::info!("decrypting data...");
+                 let mut decrypted = vec![];
+                 let mut reader = decryptor
+                     .decrypt(&Secret::new(key.to_string()), None)
+                     .map_err(|err| {
+                         LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
+                     })?;
+                 tracing::info!("decrypting data success");
+
+                 reader.read_to_end(&mut decrypted).map_err(|err| {
+                     LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
+                 })?;
+
+                 Ok(decrypted)
+             })?;
+
+            encrypt_store_doc(&mut incomming_ledger_doc, key)?;
+        }
+
+        // successfully drained the stream
+        // loop through docs that were temp stored using the temp_stored_uuids vector
+
+        let temp_docs = decrypt_load_temp_docs::<T>(&self.name, self.pw.expose_secret())?;
+
+        for mut temp_doc in temp_docs.into_iter() {
+            let uuid = Document::<T>::temp_uuid_to_uuid(temp_doc.read_uuid())?;
+
+            temp_doc.append_uuid(&uuid);
+
+            encrypt_store_doc(&mut temp_doc, self.pw.expose_secret())?;
         }
 
         tracing::info!("Merge stream finished.");
@@ -333,7 +382,6 @@ fn decrypt_load_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
     key: &str,
 ) -> Result<(), LocalLedgerError> {
     let loaded_doc = Document::<T>::decrypt_load(curr_doc.label(), uuid, |encrypted_data| {
-        tracing::info!("In decrypt callback");
         let decryptor = match age::Decryptor::new(&encrypted_data[..]).map_err(|err| {
             tracing::error!("decryptor error: {:?}", err);
             LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
@@ -342,14 +390,12 @@ fn decrypt_load_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
             _ => Err(LocalLedgerError::new("Failed to decrypt. Received encrypted data that was secured by some means other than a passphrase."))
         }?;
 
-        tracing::info!("decrypting data...");
         let mut decrypted = vec![];
         let mut reader = decryptor
             .decrypt(&Secret::new(key.to_owned()), None)
             .map_err(|err| {
                 LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
             })?;
-        tracing::info!("decrypting data success");
 
         reader.read_to_end(&mut decrypted).map_err(|err| {
             LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
@@ -388,14 +434,40 @@ fn encrypt_store_doc<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
     Ok(())
 }
 
-/// This funciton is for passing through already encrypted documents i.e documents comming in from
-/// a merge
-fn encrypt_store_pass_through<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
-    doc: &mut Document<T>,
-) -> Result<(), LocalLedgerError> {
-    doc.store_encrypted(|data| Ok(data))?;
+fn decrypt_load_temp_docs<T: Clone + Serialize + DeserializeOwned + Default + Debug>(
+    label: &str,
+    key: &str,
+) -> Result<Vec<Document<T>>, LocalLedgerError> {
+    let temp_uuids = Document::<T>::get_all_temp_uuids(label)?;
 
-    Ok(())
+    let decrypted_temp_docs: Result<Vec<_>, _>  = temp_uuids.into_iter().map(|uuid| {
+        let loaded_doc = Document::<T>::decrypt_load(label, &uuid, |encrypted_data| {
+            let decryptor = match age::Decryptor::new(&encrypted_data[..]).map_err(|err| {
+                tracing::error!("decryptor error: {:?}", err);
+                LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
+            })? {
+                age::Decryptor::Passphrase(d) => Ok(d),
+                _ => Err(LocalLedgerError::new("Failed to decrypt. Received encrypted data that was secured by some means other than a passphrase."))
+            }?;
+
+            let mut decrypted = vec![];
+            let mut reader = decryptor
+                .decrypt(&Secret::new(key.to_owned()), None)
+                .map_err(|err| {
+                    LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
+                })?;
+
+            reader.read_to_end(&mut decrypted).map_err(|err| {
+                LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
+            })?;
+
+            Ok(decrypted)
+        });
+
+        loaded_doc
+    }).collect();
+
+    decrypted_temp_docs
 }
 
 fn try_load_meta_doc(ledger_name: &str) -> Option<Document<LocalLedgerMetaData>> {

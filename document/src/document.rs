@@ -19,6 +19,9 @@ pub struct Document<T> {
     rev_history: Vec<String>,
 }
 
+const TEMP_SUFFIX: &str = "TEMP";
+const CONFLICT_SUFFIX: &str = "CONF";
+
 impl<T> Document<T>
 where
     T: Clone + Serialize + DeserializeOwned + Default + Debug,
@@ -129,6 +132,36 @@ where
         //let _ = std::mem::replace(self, parsed_doc);
 
         Ok(parsed_doc)
+    }
+
+    pub fn decrypt<F>(&mut self, decrypt_fn: F) -> Result<&Self, LocalLedgerError>
+    where
+        F: Fn(&Vec<u8>) -> Result<Vec<u8>, LocalLedgerError>,
+    {
+        if !self.encrypted {
+            let err = LocalLedgerError::new("Document is not encrypted");
+
+            return Err(err);
+        }
+
+        if self.encrypted_data.is_empty() {
+            let err = LocalLedgerError::new("No data to decrypt");
+
+            return Err(err);
+        }
+
+        let decrypted_data = decrypt_fn(&self.encrypted_data)?;
+        let parsed_data: T = serde_json::from_slice(&decrypted_data).map_err(|err| {
+            LocalLedgerError::new(&format!(
+                "Failed to parse decrypted data: {}",
+                err.to_string()
+            ))
+        })?;
+
+        self.data = parsed_data;
+        self.has_been_decrypted = true;
+
+        Ok(self)
     }
 
     pub fn doc_exists(label: &str, uuid: &str) -> Result<bool, LocalLedgerError> {
@@ -277,6 +310,80 @@ where
 
         conflict_present
     }
+
+    /// Save document as a temporary file.  Warning, this method does not encrypt nor does it do conflict detection.  Last call wins.
+    pub fn temp_store(&mut self) -> Result<&Self, LocalLedgerError> {
+        self.do_temp_store(TEMP_SUFFIX)
+    }
+
+    /// Save document as a conflict.  Warning, this method does not encrypt nor does it do conflict detection.  Last call wins
+    pub fn conflict_store(&mut self) -> Result<&Self, LocalLedgerError> {
+        self.do_temp_store(CONFLICT_SUFFIX)
+    }
+
+    // pub fn load_temp_docs(label: &str) -> Result<Vec<Self>, LocalLedgerError> {
+    //     let temp_uuids = Document::<T>::get_all_uuids(label)?
+    //         .into_iter()
+    //         .filter(|uuid| uuid.ends_with(TEMP_SUFFIX));
+
+    //     // This will fail because temp stored docs could be encrypted
+    //     temp_uuids
+    //         .map(|uuid| Document::<T>::load(label, &uuid))
+    //         .collect()
+    // }
+
+    fn do_temp_store(&mut self, temp_name: &str) -> Result<&Self, LocalLedgerError> {
+        let doc_bytes =
+            serde_json::to_vec(&self).map_err(|e| LocalLedgerError::new(&e.to_string()))?;
+        let mut path = get_or_create_doc_dir(&self.label)?;
+        path.push(format!("{}_{}.json", self.uuid, temp_name));
+        let mut doc_file = get_or_create_doc_file(&path)?;
+
+        // Set length of file to insure we are replacing the contents.
+        // This can be done via call the .truncate() in get_or_create_doc_file
+        doc_file.set_len(doc_bytes.len() as u64).map_err(|err| {
+            LocalLedgerError::new(&format!("Failed to set file length: {}", err.to_string()))
+        })?;
+
+        doc_file.write_all(&doc_bytes).map_err(|err| {
+            LocalLedgerError::new(&format!("Failed to save doc: {}", err.to_string()))
+        })?;
+
+        Ok(self)
+    }
+
+    pub fn get_all_temp_uuids(label: &str) -> Result<Vec<String>, LocalLedgerError> {
+        let temp_uuids: Vec<String> = Document::<T>::get_all_uuids(label)?
+            .into_iter()
+            .filter(|uuid| uuid.ends_with(TEMP_SUFFIX))
+            .collect();
+
+        Ok(temp_uuids)
+    }
+
+    pub fn temp_uuid_to_uuid(temp_uuid: &str) -> Result<String, LocalLedgerError> {
+        match temp_uuid.split("_").next() {
+            Some(uuid) => Ok(uuid.to_string()),
+            None => Err(LocalLedgerError::new(&format!(
+                "The provided temp_uuid, {}, is not valid",
+                temp_uuid
+            ))),
+        }
+    }
+
+    //fn do_temp_load(label: &str, uuid: &str) {}
+
+    // pub fn temp_load(&mut self) -> Result<&Self, LocalLedgerError> {
+
+    //     let contents = load_from_disc(uuid, &label)?;
+    //     let doc = parse_doc::<T>(&contents)?;
+
+    //     if doc.encrypted {
+    //         return Err(LocalLedgerError::new("Load failed.  Data is encrypted"));
+    //     }
+
+    //     Ok(doc)
+    // }
 
     fn do_store<'a>(&'a mut self) -> Result<&'a Self, LocalLedgerError> {
         let new_rev = generate_id();

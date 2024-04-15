@@ -139,3 +139,43 @@ impl PasswordLedgerHandler {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{LandStrider, LandStriderConfig};
+    use land_strider::startup::land_strider_app;
+    use utility::generate_id;
+
+    #[tokio::test]
+    async fn should_be_able_to_sync_with_server() {
+        let test_server_config = axum_test::TestServerConfig::builder()
+            .transport(axum_test::Transport::HttpRandomPort)
+            .build();
+        let server =
+            axum_test::TestServer::new_with_config(land_strider_app(), test_server_config).unwrap();
+        let addr_url = server.server_address().unwrap();
+        let host = addr_url.host().unwrap().to_string();
+        let port = addr_url.port().unwrap();
+        let ls_config = LandStriderConfig::new(&host, port as u32);
+        let land_strider = LandStrider::new(ls_config);
+
+        let master_pw = "password".to_string();
+        let mut pl = PasswordLedgerHandler::new();
+        let entry_name = generate_id();
+
+        pl.start(&master_pw).unwrap();
+        pl.add_entry(&entry_name, "test1234").unwrap();
+        let dump = pl.get_doc_dump().unwrap();
+
+        let temp_pw = "1234".to_string();
+        let pin = land_strider
+            .push_s(dump, temp_pw.clone())
+            .await
+            .unwrap()
+            .pin;
+        let ps = land_strider.pull_s(&pin, &temp_pw).await.unwrap();
+
+        pl.merge(ps).await.unwrap();
+    }
+}
