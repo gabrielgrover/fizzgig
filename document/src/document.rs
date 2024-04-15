@@ -184,13 +184,15 @@ where
                         }
 
                         let path = dir_entry.path();
-
                         let file_name = path
                             .file_stem()
                             .and_then(|s| s.to_str())
                             .ok_or(LocalLedgerError::new("Failed to find document uuid"))?;
+                        let is_conflict = file_name.contains(CONFLICT_SUFFIX);
 
-                        accum.push(file_name.to_string());
+                        if !is_conflict {
+                            accum.push(file_name.to_string());
+                        }
 
                         Ok(accum)
                     }
