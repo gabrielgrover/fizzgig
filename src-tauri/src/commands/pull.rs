@@ -11,7 +11,6 @@ pub async fn pull<'a>(
         .pull_s(&pin, &temp_pw)
         .await
         .map_err(|e| e.to_string())?;
-
     let mut pw_ledger = app_state.pw_ledger.lock().await;
     pw_ledger.merge(ps).await?;
 

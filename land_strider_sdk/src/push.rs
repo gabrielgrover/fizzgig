@@ -19,8 +19,8 @@ pub enum PushErr {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct PushResponse {
-    success: bool,
-    pin: String,
+    pub success: bool,
+    pub pin: String,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -127,6 +127,7 @@ pub async fn push_s<R: std::io::Read + Sync + Send + 'static>(
             "Authorization",
             format!("Bearer {}", reserve_pin_resp.token),
         )
+        .header("Content-type", "application/octet-stream")
         .body(reqwest::Body::wrap_stream(s))
         .send()
         .await

@@ -21,6 +21,7 @@ pub fn generate_pin() -> String {
 pub enum LocalLedgerErrorType {
     Default,
     Confict,
+    MetaDocConflict,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -46,8 +47,19 @@ impl LocalLedgerError {
         }
     }
 
+    pub fn meta_doc_conflict(m: &str) -> Self {
+        LocalLedgerError {
+            message: m.to_string(),
+            err_type: LocalLedgerErrorType::MetaDocConflict,
+        }
+    }
+
     pub fn is_conflict_err(&self) -> bool {
         self.err_type == LocalLedgerErrorType::Confict
+    }
+
+    pub fn err_type(&self) -> &LocalLedgerErrorType {
+        &self.err_type
     }
 }
 
