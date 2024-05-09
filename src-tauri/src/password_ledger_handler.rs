@@ -183,11 +183,6 @@ impl PasswordLedgerHandler {
     }
 
     pub fn resolve(&mut self, entry_name: &str, keep_original: bool) -> Result<(), String> {
-        tracing::info!(
-            "Resolving {}.  Keeping local: {}",
-            entry_name,
-            keep_original
-        );
         let password_ledger = self
             .ledger
             .as_mut()

@@ -157,8 +157,6 @@ where
         let mut loaded_conf_doc: Document<T> = decrypt_load_conf(&self.name, &key, entry_name)?;
         let conf_doc_uuid = loaded_conf_doc.get_uuid();
 
-        tracing::info!("loaded_conf_doc: {:?}", loaded_conf_doc);
-
         if keep_original {
             self.remove(loaded_conf_doc.read_uuid())?;
         } else {
@@ -312,20 +310,11 @@ where
             let mut incomming_ledger_doc = serde_json::from_value::<Document<T>>(val)
                 .map_err(|e| LocalLedgerError::new(&e.to_string()))?;
             let our_ledger_doc = self.get_doc(&uuid)?;
-            tracing::info!("Checking uuid {} for conflict", &uuid);
             let conflict = Document::<T>::check_for_conflict(our_ledger_doc, &incomming_ledger_doc);
 
             if conflict {
                 // Mark document as conflict
-                tracing::info!(
-                    "incomming_ledger_doc uuid before storage: {}",
-                    incomming_ledger_doc.get_uuid()
-                );
                 incomming_ledger_doc.conflict_store()?;
-                tracing::info!(
-                    "incomming_ledger_doc uuid after storage: {}",
-                    incomming_ledger_doc.get_uuid()
-                );
                 conflict_uuids.push(incomming_ledger_doc.get_uuid());
                 tracing::warn!("Conflict found!");
                 continue;

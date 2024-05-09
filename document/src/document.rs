@@ -371,7 +371,6 @@ where
 
     /// Save document as a conflict.  Warning, this method does not encrypt nor does it do conflict detection.  Last call wins
     pub fn conflict_store(&mut self) -> Result<&Self, LocalLedgerError> {
-        tracing::info!("\nconflict temp store\n");
         self.do_temp_store(CONFLICT_SUFFIX)
     }
 
@@ -383,7 +382,6 @@ where
             serde_json::to_vec(&self).map_err(|e| LocalLedgerError::new(&e.to_string()))?;
         let mut path = get_or_create_doc_dir(&self.label)?;
         path.push(format!("{}.json", temp_uuid));
-        tracing::info!("Path: {:?}", path);
         let mut doc_file = get_or_create_doc_file(&path)?;
 
         // Set length of file to insure we are replacing the contents.
