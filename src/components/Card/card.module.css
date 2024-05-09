@@ -7,8 +7,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-	max-height: 115px;
-	min-width: 200px;
+  min-width: 200px;
 }
 
 .clickable_item {
@@ -20,9 +19,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-	max-height: 115px;
-	cursor: pointer;
-	min-width: 200px;
+  cursor: pointer;
+  min-width: 200px;
 }
 
 .item_title {
@@ -33,7 +31,7 @@
 .item_buttons {
   display: flex;
   gap: 10px;
-	flex-wrap: wrap;
+  flex-wrap: wrap;
 }
 
 .item_buttons button {

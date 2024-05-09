@@ -1,6 +1,7 @@
 mod add_entry;
 mod export_ledger;
 mod generate_pw;
+mod get_conf_pair;
 mod greet;
 mod list;
 mod open_collection;
@@ -10,11 +11,13 @@ mod push_s;
 mod read_entry;
 mod regen_pw;
 mod remove_entry;
+mod resolve_conflict;
 mod saved_password;
 
 pub use add_entry::add_entry;
 pub use export_ledger::*;
 pub use generate_pw::*;
+pub use get_conf_pair::*;
 pub use greet::greet;
 pub use list::list;
 pub use open_collection::open_collection;
@@ -24,5 +27,6 @@ pub use push_s::push_s;
 pub use read_entry::read_entry;
 pub use regen_pw::regen_pw;
 pub use remove_entry::remove_entry;
+pub use resolve_conflict::*;
 
 pub use saved_password::SavedPassword;

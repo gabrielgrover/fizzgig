@@ -1014,6 +1014,8 @@ dependencies = [
  "dirs 3.0.2",
  "serde",
  "serde_json",
+ "tracing",
+ "tracing-subscriber",
  "utility",
 ]
 

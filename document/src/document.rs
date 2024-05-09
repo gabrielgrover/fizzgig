@@ -1,5 +1,6 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fmt::Debug,
     io::{Read, Seek, Write},
     path::PathBuf,
@@ -114,7 +115,6 @@ where
         F: Fn(&Vec<u8>) -> Result<Vec<u8>, LocalLedgerError>,
     {
         let contents = load_from_disc(uuid, label)?;
-
         let mut parsed_doc = parse_doc(&contents)?;
         let decrypted_data = decrypt(&parsed_doc.encrypted_data)?;
 
@@ -126,12 +126,23 @@ where
         })?;
 
         parsed_doc.data = parsed_data;
-
         parsed_doc.has_been_decrypted = true;
 
-        //let _ = std::mem::replace(self, parsed_doc);
-
         Ok(parsed_doc)
+    }
+
+    /// Loads conflict Document from the filesystem, but calls decrypt transform function after reading from disk.
+    pub fn decrypt_load_conf<F>(
+        label: &str,
+        uuid: &str,
+        decrypt: F,
+    ) -> Result<Self, LocalLedgerError>
+    where
+        F: Fn(&Vec<u8>) -> Result<Vec<u8>, LocalLedgerError>,
+    {
+        let conf_uuid = format!("{}_{}", uuid, CONFLICT_SUFFIX);
+
+        Self::decrypt_load(label, &conf_uuid, decrypt)
     }
 
     pub fn decrypt<F>(&mut self, decrypt_fn: F) -> Result<&Self, LocalLedgerError>
@@ -171,12 +182,26 @@ where
         Ok(path.exists())
     }
 
+    /// Gets all uuids that do not have a conflict
     pub fn get_all_uuids(label: &str) -> Result<Vec<String>, LocalLedgerError> {
+        let doc_uuids = Self::do_get_all_uuids(label)?.0;
+
+        Ok(doc_uuids)
+    }
+
+    pub fn get_all_conflict_uuids(label: &str) -> Result<Vec<String>, LocalLedgerError> {
+        let doc_uuids = Self::do_get_all_uuids(label)?.1;
+
+        Ok(doc_uuids)
+    }
+
+    fn do_get_all_uuids(label: &str) -> Result<(Vec<String>, Vec<String>), LocalLedgerError> {
         let path = get_dir_path(label)?;
+        let mut conf_ledger = HashMap::<String, bool>::new();
         let doc_uuids = std::fs::read_dir(path)
             .map_err(|e| LocalLedgerError::new(&e.to_string()))?
             .try_fold(
-                Vec::<String>::new(),
+                (Vec::<String>::new(), Vec::<String>::new()),
                 |mut accum, dir_entry_result| match dir_entry_result {
                     Ok(dir_entry) => {
                         if dir_entry.path().is_dir() {
@@ -190,9 +215,21 @@ where
                             .ok_or(LocalLedgerError::new("Failed to find document uuid"))?;
                         let is_conflict = file_name.contains(CONFLICT_SUFFIX);
 
-                        if !is_conflict {
-                            accum.push(file_name.to_string());
+                        if is_conflict {
+                            let uuid = file_name
+                                .to_string()
+                                .replace(&format!("_{}", CONFLICT_SUFFIX), "");
+                            accum.1.push(uuid.clone());
+                            conf_ledger.insert(uuid.clone(), true);
+
+                            return Ok(accum);
                         }
+
+                        if let Some(_) = conf_ledger.get(&file_name.to_string()) {
+                            return Ok(accum);
+                        }
+
+                        accum.0.push(file_name.to_string());
 
                         Ok(accum)
                     }
@@ -277,6 +314,20 @@ where
         ))
     }
 
+    pub fn take_data(self) -> Result<T, LocalLedgerError> {
+        if !self.encrypted {
+            return Ok(self.data);
+        }
+
+        if self.encrypted && self.has_been_decrypted() {
+            return Ok(self.data);
+        }
+
+        Err(LocalLedgerError::new(
+            "Document is encrypted.  Please use decrypt_load in order to read this document",
+        ))
+    }
+
     /// Returns read only uuid
     pub fn read_uuid<'a>(&'a self) -> &'a str {
         &self.uuid
@@ -320,25 +371,19 @@ where
 
     /// Save document as a conflict.  Warning, this method does not encrypt nor does it do conflict detection.  Last call wins
     pub fn conflict_store(&mut self) -> Result<&Self, LocalLedgerError> {
+        tracing::info!("\nconflict temp store\n");
         self.do_temp_store(CONFLICT_SUFFIX)
     }
 
-    // pub fn load_temp_docs(label: &str) -> Result<Vec<Self>, LocalLedgerError> {
-    //     let temp_uuids = Document::<T>::get_all_uuids(label)?
-    //         .into_iter()
-    //         .filter(|uuid| uuid.ends_with(TEMP_SUFFIX));
-
-    //     // This will fail because temp stored docs could be encrypted
-    //     temp_uuids
-    //         .map(|uuid| Document::<T>::load(label, &uuid))
-    //         .collect()
-    // }
-
     fn do_temp_store(&mut self, temp_name: &str) -> Result<&Self, LocalLedgerError> {
+        let temp_uuid = format!("{}_{}", self.uuid, temp_name);
+        self.append_uuid(&temp_uuid);
+
         let doc_bytes =
             serde_json::to_vec(&self).map_err(|e| LocalLedgerError::new(&e.to_string()))?;
         let mut path = get_or_create_doc_dir(&self.label)?;
-        path.push(format!("{}_{}.json", self.uuid, temp_name));
+        path.push(format!("{}.json", temp_uuid));
+        tracing::info!("Path: {:?}", path);
         let mut doc_file = get_or_create_doc_file(&path)?;
 
         // Set length of file to insure we are replacing the contents.
@@ -364,6 +409,8 @@ where
     }
 
     pub fn temp_uuid_to_uuid(temp_uuid: &str) -> Result<String, LocalLedgerError> {
+        // I really don't like this function.  It's super hacky.  Should find a better way to
+        // accomplish this
         match temp_uuid.split("_").next() {
             Some(uuid) => Ok(uuid.to_string()),
             None => Err(LocalLedgerError::new(&format!(

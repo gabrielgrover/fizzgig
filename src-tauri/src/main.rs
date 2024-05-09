@@ -10,12 +10,9 @@ mod local_ledger_worker;
 mod password_ledger_handler;
 
 use app_state::*;
-use commands::{
-    add_entry, export_ledger, generate_pw, greet, list, open_collection, pull, push, push_s,
-    read_entry, regen_pw, remove_entry,
-};
+use commands::*;
 use land_strider_sdk::*;
-use password_ledger_handler::PasswordLedgerHandler;
+use password_ledger_handler::*;
 use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter};
 
@@ -50,7 +47,9 @@ async fn main() {
             export_ledger,
             push,
             pull,
-            push_s
+            push_s,
+            get_conf_pair,
+            resolve_conflict
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())

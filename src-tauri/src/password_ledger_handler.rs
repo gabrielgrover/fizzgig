@@ -12,6 +12,12 @@ pub struct PasswordLedgerHandler {
     ledger: Option<LocalLedger<SavedPassword>>,
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct EntryMetaData {
+    pub label: String,
+    pub has_conflict: bool,
+}
+
 impl PasswordLedgerHandler {
     pub fn new() -> Self {
         Self { ledger: None }
@@ -76,21 +82,40 @@ impl PasswordLedgerHandler {
             .map_err(|e| e.to_string())
     }
 
-    pub fn list_entries(&self) -> Result<Vec<String>, String> {
+    pub fn list_entry_meta_data(&self) -> Result<Vec<EntryMetaData>, String> {
         let password_ledger = self
             .ledger
             .as_ref()
             .ok_or("Ledger has not been started".to_string())?;
-
-        password_ledger
+        let entries_with_conflict: Vec<_> = password_ledger
+            .list_entries_with_conflicts()
+            .map(|entries| {
+                entries
+                    .into_iter()
+                    .map(|label| EntryMetaData {
+                        label,
+                        has_conflict: true,
+                    })
+                    .collect()
+            })
+            .map_err(|e| e.to_string())?;
+        let entries: Vec<_> = password_ledger
             .list_entry_labels()
             .map(|entries| {
                 entries
                     .into_iter()
-                    .map(|entry_name| entry_name.to_string())
+                    .map(|label| EntryMetaData {
+                        label,
+                        has_conflict: false,
+                    })
                     .collect()
             })
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+
+        Ok(entries
+            .into_iter()
+            .chain(entries_with_conflict.into_iter())
+            .collect())
     }
 
     pub fn get_pw(&mut self, entry_name: &str) -> Result<String, String> {
@@ -137,6 +162,40 @@ impl PasswordLedgerHandler {
         password_ledger.merge(s).await.map_err(|e| e.to_string())?;
 
         Ok(())
+    }
+
+    /// Get conf tuple (original_password, remote_password)
+    pub fn get_conf_pair(&mut self, entry_name: &str) -> Result<(String, String), String> {
+        let password_ledger = self
+            .ledger
+            .as_mut()
+            .ok_or("Ledger has not been started".to_string())?;
+        let conf_doc = password_ledger
+            .get_conf(entry_name)
+            .map_err(|e| e.to_string())?;
+        let conf_data = conf_doc.read_data().map_err(|e| e.to_string())?;
+        let original_doc = password_ledger
+            .read_by_entry_name(entry_name)
+            .map_err(|e| e.to_string())?;
+        let pair = (original_doc.pw.clone(), conf_data.pw.to_string());
+
+        Ok(pair)
+    }
+
+    pub fn resolve(&mut self, entry_name: &str, keep_original: bool) -> Result<(), String> {
+        tracing::info!(
+            "Resolving {}.  Keeping local: {}",
+            entry_name,
+            keep_original
+        );
+        let password_ledger = self
+            .ledger
+            .as_mut()
+            .ok_or("Ledger has not been started".to_string())?;
+
+        password_ledger
+            .resolve(entry_name, keep_original)
+            .map_err(|e| e.to_string())
     }
 }
 

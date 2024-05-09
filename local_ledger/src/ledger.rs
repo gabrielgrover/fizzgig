@@ -135,6 +135,42 @@ where
         cached_doc.read_data()
     }
 
+    pub fn get_conf(&mut self, entry_name: &str) -> Result<Document<T>, LocalLedgerError> {
+        let key = &self.pw.expose_secret();
+        let conf_doc = decrypt_load_conf::<T>(&self.name, key, entry_name)?;
+
+        Ok(conf_doc)
+    }
+
+    pub fn resolve(
+        &mut self,
+        entry_name: &str,
+        keep_original: bool,
+    ) -> Result<(), LocalLedgerError> {
+        // There is knowledge of the internals of the Document struct embedded in this logic.
+        // This methods knows that the uuids of the original doc and the conflict doc differ.
+        // I think temp_doc and conf_doc management should be handled in the Ledger and not the
+        // Document struct
+        let original_doc = self.get_doc(entry_name)?;
+        let original_uuid = original_doc.get_uuid();
+        let key = self.pw.expose_secret().clone();
+        let mut loaded_conf_doc: Document<T> = decrypt_load_conf(&self.name, &key, entry_name)?;
+        let conf_doc_uuid = loaded_conf_doc.get_uuid();
+
+        tracing::info!("loaded_conf_doc: {:?}", loaded_conf_doc);
+
+        if keep_original {
+            self.remove(loaded_conf_doc.read_uuid())?;
+        } else {
+            loaded_conf_doc.append_uuid(&original_uuid);
+            self.remove(&original_uuid)?;
+            self.remove(&conf_doc_uuid)?;
+            encrypt_store_doc(&mut loaded_conf_doc, &key)?;
+        }
+
+        Ok(())
+    }
+
     pub fn read_by_entry_name<'a>(
         &'a mut self,
         entry_name: &str,
@@ -208,6 +244,12 @@ where
         Ok(labels)
     }
 
+    pub fn list_entries_with_conflicts(&self) -> Result<Vec<String>, LocalLedgerError> {
+        let labels: Vec<_> = Document::<T>::get_all_conflict_uuids(&self.name)?;
+
+        Ok(labels)
+    }
+
     pub fn get_ledger_dir(&self) -> Result<PathBuf, LocalLedgerError> {
         self.meta_doc.get_data_dir()
     }
@@ -249,7 +291,7 @@ where
                 if conflict {
                     // Conflict in the meta doc probably means that decryption is most likely to
                     // fail for the new imported docs.  We need to clear everything out and notify
-                    // the user
+                    // the user.
                     tracing::warn!("Meta doc conflict detected.");
                     temp_stored_uuids
                         .into_iter()
@@ -270,14 +312,26 @@ where
             let mut incomming_ledger_doc = serde_json::from_value::<Document<T>>(val)
                 .map_err(|e| LocalLedgerError::new(&e.to_string()))?;
             let our_ledger_doc = self.get_doc(&uuid)?;
+            tracing::info!("Checking uuid {} for conflict", &uuid);
             let conflict = Document::<T>::check_for_conflict(our_ledger_doc, &incomming_ledger_doc);
 
             if conflict {
                 // Mark document as conflict
+                tracing::info!(
+                    "incomming_ledger_doc uuid before storage: {}",
+                    incomming_ledger_doc.get_uuid()
+                );
                 incomming_ledger_doc.conflict_store()?;
+                tracing::info!(
+                    "incomming_ledger_doc uuid after storage: {}",
+                    incomming_ledger_doc.get_uuid()
+                );
                 conflict_uuids.push(incomming_ledger_doc.get_uuid());
+                tracing::warn!("Conflict found!");
                 continue;
             }
+
+            tracing::info!("No conflict found.");
 
             if !meta_doc_has_been_stored {
                 incomming_ledger_doc.temp_store()?;
@@ -335,6 +389,8 @@ where
 
     fn get_doc<'a>(&'a mut self, uuid: &str) -> Result<&'a Document<T>, LocalLedgerError> {
         //TODO got some dup code with the `read` method
+        //Made this because i needed a method that retrieved the Doc struct.
+        //The read method reads the data inside a Document sturct
         let doc_is_cached = self.doc_cache.contains(uuid);
         let key = &self.pw.expose_secret();
 
@@ -468,6 +524,53 @@ fn decrypt_load_temp_docs<T: Clone + Serialize + DeserializeOwned + Default + De
     }).collect();
 
     decrypted_temp_docs
+}
+
+fn decrypt_load_conf_docs<'a, T>(
+    label: &'a str,
+    key: &'a str,
+) -> Result<impl Iterator<Item = Result<Document<T>, LocalLedgerError>> + 'a, LocalLedgerError>
+where
+    T: Clone + Serialize + DeserializeOwned + Default + Debug,
+{
+    let conf_uuids = Document::<T>::get_all_conflict_uuids(label)?;
+
+    let it = conf_uuids.into_iter().map(move |uuid| {
+        let loaded_doc = decrypt_load_conf(label, key, &uuid);
+
+        loaded_doc
+    });
+
+    Ok(it)
+}
+
+fn decrypt_load_conf<T>(label: &str, key: &str, uuid: &str) -> Result<Document<T>, LocalLedgerError>
+where
+    T: Clone + Serialize + DeserializeOwned + Default + Debug,
+{
+    let loaded_doc = Document::<T>::decrypt_load_conf(label, uuid, |encrypted_data| {
+        let decryptor = match age::Decryptor::new(&encrypted_data[..]).map_err(|err| {
+                LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
+            })? {
+                age::Decryptor::Passphrase(d) => Ok(d),
+                _ => Err(LocalLedgerError::new("Failed to decrypt. Received encrypted data that was secured by some means other than a passphrase."))
+            }?;
+
+        let mut decrypted = vec![];
+        let mut reader = decryptor
+            .decrypt(&Secret::new(key.to_owned()), None)
+            .map_err(|err| {
+                LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
+            })?;
+
+        reader.read_to_end(&mut decrypted).map_err(|err| {
+            LocalLedgerError::new(&format!("Failed to decrypt data: {}", err.to_string()))
+        })?;
+
+        Ok(decrypted)
+    });
+
+    loaded_doc
 }
 
 fn try_load_meta_doc(ledger_name: &str) -> Option<Document<LocalLedgerMetaData>> {
