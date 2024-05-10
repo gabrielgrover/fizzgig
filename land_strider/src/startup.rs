@@ -156,7 +156,6 @@ async fn pull(State(state): State<AppState>, params: Query<PullReqParams>) -> im
     }
 
     let mut parts: Vec<Result<Bytes, Infallible>> = vec![];
-
     for (k, bytes) in sync_job.into_iter() {
         if k == "pw" {
             continue;
@@ -228,60 +227,6 @@ async fn reserve_pin(
         serde_json::json!({"success": true, "token": jwt, "pin": pin}).to_string(),
     ))
 }
-
-// async fn push(
-//     State(state): State<AppState>,
-//     mut multipart: Multipart,
-// ) -> Result<(StatusCode, String), (StatusCode, String)> {
-//     let pin = generate_pin();
-//     let mut sync_job = HashMap::<String, Bytes>::new();
-//
-//     let mut pw_hashed = false;
-//
-//     while let Some(field) = multipart
-//         .next_field()
-//         .await
-//         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
-//     {
-//         let name = field
-//             .name()
-//             .ok_or((
-//                 StatusCode::BAD_REQUEST,
-//                 "Form fields must have a name".to_string(),
-//             ))?
-//             .to_string();
-//
-//         let data = field
-//             .bytes()
-//             .await
-//             .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-//
-//         let d = if name == "pw" {
-//             pw_hashed = true;
-//             pwhash::bcrypt::hash(data)
-//                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-//                 .into()
-//         } else {
-//             data
-//         };
-//
-//         sync_job.insert(name, d);
-//     }
-//
-//     if !pw_hashed {
-//         return Err((
-//             StatusCode::BAD_REQUEST,
-//             "Expected form field `pw`".to_string(),
-//         ));
-//     }
-//
-//     state.sync_jobs.lock().await.insert(pin.clone(), sync_job);
-//
-//     Ok((
-//         StatusCode::CREATED,
-//         serde_json::json!({"success": true, "pin": pin}).to_string(),
-//     ))
-// }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct JWTClaims {

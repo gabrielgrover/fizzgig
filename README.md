@@ -1,7 +1,17 @@
-# Tauri + Solid + Typescript
+# Fizzgig
 
-This template should help get you started developing with Tauri, Solid and Typescript in Vite.
+Password manager app.  
 
-## Recommended IDE Setup
+## Build
+- production
+    - run `yarn tauri build`
+- dev
+    - run `yarn tauri dev`
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## Files location
+
+Your password files will be encrypted and stored in `~/.fizzgig/Password_Ledger/`
+
+## Sync server
+
+The sync server code is under the `land_strider` directory.  You can run is using `cargo run`.
