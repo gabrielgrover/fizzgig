@@ -1,57 +1,66 @@
 import { Ok, Err, Result } from "ts-results-intraloop-fork";
 import { invoke } from "@tauri-apps/api/tauri";
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import styles from "./home.module.css";
-import { set_err } from "./signals";
+import { set_err, sync_in_progress } from "./signals";
 
 export function UploadTab() {
   const [temp_pw, set_temp_pw] = createSignal("");
   const [pin, set_pin] = createSignal("");
   return (
-    <div class={styles.push_container}>
-      <p>Upload to sync server</p>
-      <div class={styles.push_temp_pw_container}>
-        <input
-          class={styles.item_input}
-          placeholder="Temporary password"
-          type="password"
-          onInput={(e) => {
-            e.preventDefault();
-
-            set_temp_pw(e.currentTarget.value);
-          }}
-        />
-      </div>
-      <div style={styles.item_buttons}>
-        <button
-          onClick={async () => {
-            const pw = temp_pw();
-
-            if (!pw) {
-              return;
-            }
-
-            const res = await push(pw);
-
-            if (res.err) {
-              return set_err(res.val);
-            }
-
-            set_pin(res.val);
-
-            console.log({ pin: res.val });
-          }}
-        >
-          Upload
-        </button>
-      </div>
-      {pin() && (
-        <p>
-          Your pin is {pin()}. Use the pin and your temporary password to
-          download your passwords from the server.
+    <>
+      <Show when={sync_in_progress()}>
+        <p style={{ "padding-left": "20px" }}>
+          Sync in progress. One moment please.
         </p>
-      )}
-    </div>
+      </Show>
+      <Show when={!sync_in_progress()}>
+        <div class={styles.push_container}>
+          <p>Upload to sync server</p>
+          <div class={styles.push_temp_pw_container}>
+            <input
+              class={styles.item_input}
+              placeholder="Temporary password"
+              type="password"
+              onInput={(e) => {
+                e.preventDefault();
+
+                set_temp_pw(e.currentTarget.value);
+              }}
+            />
+          </div>
+          <div style={styles.item_buttons}>
+            <button
+              onClick={async () => {
+                const pw = temp_pw();
+
+                if (!pw) {
+                  return;
+                }
+
+                const res = await push(pw);
+
+                if (res.err) {
+                  return set_err(res.val);
+                }
+
+                set_pin(res.val);
+
+                console.log({ pin: res.val });
+              }}
+            >
+              Upload
+            </button>
+          </div>
+          {pin() && (
+            <p>
+              Your pin is {pin()}. Use the pin and your temporary password to
+              download your passwords from the server.
+            </p>
+          )}
+        </div>
+      </Show>
+    </>
   );
 }
 
