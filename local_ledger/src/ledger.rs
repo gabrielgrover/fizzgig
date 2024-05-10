@@ -515,24 +515,6 @@ fn decrypt_load_temp_docs<T: Clone + Serialize + DeserializeOwned + Default + De
     decrypted_temp_docs
 }
 
-fn decrypt_load_conf_docs<'a, T>(
-    label: &'a str,
-    key: &'a str,
-) -> Result<impl Iterator<Item = Result<Document<T>, LocalLedgerError>> + 'a, LocalLedgerError>
-where
-    T: Clone + Serialize + DeserializeOwned + Default + Debug,
-{
-    let conf_uuids = Document::<T>::get_all_conflict_uuids(label)?;
-
-    let it = conf_uuids.into_iter().map(move |uuid| {
-        let loaded_doc = decrypt_load_conf(label, key, &uuid);
-
-        loaded_doc
-    });
-
-    Ok(it)
-}
-
 fn decrypt_load_conf<T>(label: &str, key: &str, uuid: &str) -> Result<Document<T>, LocalLedgerError>
 where
     T: Clone + Serialize + DeserializeOwned + Default + Debug,

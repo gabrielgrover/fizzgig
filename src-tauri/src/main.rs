@@ -5,8 +5,6 @@
 
 mod app_state;
 mod commands;
-mod llw_handler;
-mod local_ledger_worker;
 mod password_ledger_handler;
 
 use app_state::*;
