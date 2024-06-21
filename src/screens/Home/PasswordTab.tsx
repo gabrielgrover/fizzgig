@@ -146,13 +146,15 @@ export function PasswordTab(props: Props) {
 
 function NewEntryButton() {
   const [should_edit, set_should_edit] = createSignal(false);
-  const [input, set_input] = createSignal("");
+  const [label, set_label] = createSignal("");
   const [is_generating, set_is_generating] = createSignal(false);
+  const [pw, set_pw] = createSignal("");
+  const [should_set, set_should_set] = createSignal(false);
   let input_ref: HTMLInputElement;
 
   createEffect(async () => {
-    if (is_generating() && input()) {
-      const result = await create_password(input());
+    if (is_generating() && label() && !should_set()) {
+      const result = await create_password(label());
 
       if (result.err) {
         set_err(result.val);
@@ -161,6 +163,19 @@ function NewEntryButton() {
       load_pw_data();
       set_is_generating(false);
       set_should_edit(false);
+    }
+
+    if (is_generating() && label() && pw()) {
+      const result = await create_password(label(), pw());
+
+      if (result.err) {
+        set_err(result.val);
+      }
+
+      load_pw_data();
+      set_is_generating(false);
+      set_should_edit(false);
+      set_should_set(false);
     }
   });
 
@@ -177,6 +192,15 @@ function NewEntryButton() {
           >
             Generate
           </button>
+          <button
+            onClick={() => {
+              set_should_edit(true);
+              set_should_set(true);
+              input_ref.focus();
+            }}
+          >
+            Set
+          </button>
         </div>
       )}
       {should_edit() && !is_generating() && (
@@ -186,7 +210,37 @@ function NewEntryButton() {
             placeholder="Password label"
             onInput={(e) => {
               e.preventDefault();
-              set_input(e.currentTarget.value);
+              set_label(e.currentTarget.value);
+            }}
+            onKeyPress={(e) => {
+              if (e.key !== "Enter") {
+                return;
+              }
+
+              if (!should_set()) {
+                set_is_generating(true);
+              }
+              //set_label("");
+            }}
+            onBlur={() => {
+              if (!should_set()) {
+                set_should_edit(false);
+              }
+            }}
+            ref={(n) => {
+              input_ref = n;
+            }}
+          />
+        </div>
+      )}
+      {should_edit() && !is_generating() && label() && should_set() && (
+        <div class={styles.item_input_container}>
+          <input
+            class={styles.item_input}
+            placeholder="Password"
+            onInput={(e) => {
+              e.preventDefault();
+              set_pw(e.currentTarget.value);
             }}
             onKeyPress={(e) => {
               if (e.key !== "Enter") {
@@ -194,10 +248,11 @@ function NewEntryButton() {
               }
 
               set_is_generating(true);
-              set_input("");
             }}
             onBlur={() => {
-              set_should_edit(false);
+              if (!should_set()) {
+                set_should_edit(false);
+              }
             }}
             ref={(n) => {
               input_ref = n;
@@ -209,9 +264,12 @@ function NewEntryButton() {
   );
 }
 
-async function create_password(label: string): Promise<Result<void, string>> {
+async function create_password(
+  label: string,
+  password?: string
+): Promise<Result<void, string>> {
   try {
-    const pw = await generate_password();
+    const pw = password ? Ok(password) : await generate_password();
 
     if (pw.err) {
       return Err(pw.val);

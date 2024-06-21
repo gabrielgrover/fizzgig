@@ -5,7 +5,6 @@ import * as E from "fp-ts/Either";
 import * as O from "fp-ts/Option";
 import * as A from "fp-ts/Array";
 import * as TE from "fp-ts/TaskEither";
-import * as TO from "fp-ts/TaskOption";
 import {
   createEffect,
   createResource,
@@ -104,8 +103,8 @@ export function ConflictTab() {
                               <div class={styles.item_buttons}>
                                 <button
                                   onClick={F.pipe(
-                                    TO.fromNullable(selected()),
-                                    TE.fromTaskOption(() => ""),
+                                    O.fromNullable(selected()),
+                                    TE.fromOption(() => ""),
                                     TE.chain((selected_pw) => {
                                       return resolve(
                                         label,
