@@ -14,4 +14,4 @@ Your password files will be encrypted and stored in `~/.fizzgig/Password_Ledger/
 
 ## Sync server
 
-The sync server code is under the `land_strider` directory.  You can run is using `cargo run`.
+The sync server code is under the `land_strider` directory.  You can run it using `cargo run`.  If you want to run it somewhere figure it out.
