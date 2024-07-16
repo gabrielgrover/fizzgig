@@ -23,6 +23,12 @@ const { data: pw_data, load: load_pw_data } = createLazyPwLoader();
 
 export function PasswordTab(props: Props) {
   const [card_loading, set_card_loading] = createSignal("");
+  const [regen_warning_labels, set_regen_warning_labels] = createSignal<
+    Record<string, boolean>
+  >({});
+  const [delete_warning_labels, set_delete_warning_labels] = createSignal<
+    Record<string, boolean>
+  >({});
 
   onMount(() => {
     load_pw_data();
@@ -94,33 +100,100 @@ export function PasswordTab(props: Props) {
                         return <div class={styles.spinner} />;
                       }
 
+                      if (regen_warning_labels()[pw_label]) {
+                        return (
+                          <div class={styles.item_buttons}>
+                            <button
+                              onClick={async () => {
+                                set_card_loading(pw_label);
+                                set_regen_warning_labels((prev) => ({
+                                  ...prev,
+                                  [pw_label]: false,
+                                }));
+                                const res = await regen_pw(pw_label);
+
+                                if (res.err) {
+                                  set_err(res.val);
+                                }
+
+                                set_card_loading("");
+                              }}
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              onClick={() => {
+                                set_regen_warning_labels((prev) => ({
+                                  ...prev,
+                                  [pw_label]: false,
+                                }));
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        );
+                      }
+
+                      if (delete_warning_labels()[pw_label]) {
+                        return (
+                          <div class={styles.item_buttons}>
+                            <button
+                              onClick={async () => {
+                                set_card_loading(pw_label);
+                                set_delete_warning_labels((prev) => ({
+                                  ...prev,
+                                  [pw_label]: false,
+                                }));
+                                const res = await remove_password(pw_label);
+                                if (res.err) {
+                                  set_err(res.val);
+                                }
+                                set_card_loading("");
+                                load_pw_data();
+                              }}
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              onClick={() => {
+                                set_delete_warning_labels((prev) => ({
+                                  ...prev,
+                                  [pw_label]: false,
+                                }));
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        );
+                      }
+
                       return (
                         <div class={styles.item_buttons}>
                           <button
                             onClick={async () => {
-                              set_card_loading(pw_label);
-                              const res = await regen_pw(pw_label);
-
-                              if (res.err) {
-                                set_err(res.val);
-                              }
-
-                              set_card_loading("");
+                              set_regen_warning_labels((prev) => ({
+                                ...prev,
+                                [pw_label]: true,
+                              }));
                             }}
                           >
                             Regen
                           </button>
                           <button
                             onClick={async () => {
-                              set_card_loading(pw_label);
-                              const res = await remove_password(pw_label);
-
-                              if (res.err) {
-                                set_err(res.val);
-                              }
-
-                              set_card_loading("");
-                              load_pw_data();
+                              set_delete_warning_labels((prev) => ({
+                                ...prev,
+                                [pw_label]: true,
+                              }));
+                              // set_card_loading(pw_label);
+                              // const res = await remove_password(pw_label);
+                              // if (res.err) {
+                              //   set_err(res.val);
+                              // }
+                              // set_card_loading("");
+                              // load_pw_data();
                             }}
                           >
                             Delete

@@ -17,10 +17,13 @@
         "all": false,
         "open": true
       },
-			"clipboard": {
+      "clipboard": {
         "all": true,
         "writeText": true,
         "readText": true
+      },
+      "notification": {
+        "all": true
       }
     },
     "bundle": {
