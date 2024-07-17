@@ -3,7 +3,7 @@ use passwords::PasswordGenerator;
 #[tauri::command]
 pub async fn generate_pw<'a>() -> Result<String, String> {
     let pg = PasswordGenerator {
-        length: 10,
+        length: 20,
         numbers: true,
         lowercase_letters: true,
         uppercase_letters: true,
