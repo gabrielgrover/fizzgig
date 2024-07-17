@@ -63,6 +63,12 @@ export const Home = () => {
 };
 
 function Tab(props: { tab_name: NavTabs }) {
+  const ignore_for_now = ["Upload", "Download", "Conflicts"];
+
+  if (ignore_for_now.includes(props.tab_name)) {
+    return null;
+  }
+
   return (
     <li
       style={
