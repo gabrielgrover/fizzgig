@@ -7,7 +7,7 @@ pub async fn regen_pw<'a>(
     app_state: tauri::State<'a, AppState>,
 ) -> Result<(), String> {
     let pg = PasswordGenerator {
-        length: 10,
+        length: 20,
         numbers: true,
         lowercase_letters: true,
         uppercase_letters: true,
