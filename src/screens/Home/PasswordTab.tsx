@@ -104,6 +104,16 @@ export function PasswordTab(props: Props) {
                         return (
                           <div class={styles.item_buttons}>
                             <button
+                              onClick={() => {
+                                set_regen_warning_labels((prev) => ({
+                                  ...prev,
+                                  [pw_label]: false,
+                                }));
+                              }}
+                            >
+                              Cancel
+                            </button>
+                            <button
                               onClick={async () => {
                                 set_card_loading(pw_label);
                                 set_regen_warning_labels((prev) => ({
@@ -120,16 +130,6 @@ export function PasswordTab(props: Props) {
                               }}
                             >
                               Confirm
-                            </button>
-                            <button
-                              onClick={() => {
-                                set_regen_warning_labels((prev) => ({
-                                  ...prev,
-                                  [pw_label]: false,
-                                }));
-                              }}
-                            >
-                              Cancel
                             </button>
                           </div>
                         );
